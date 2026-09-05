@@ -48,7 +48,7 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
             repository.read(uri, ext, uri.toString()).fold(
                 onSuccess = { text ->
                     val cells = if (ext in setOf("xlsx", "xls", "xlsm", "csv")) parseGrid(text) else List(20) { List(8) { "" } }
-                    _ui.value = _ui.value.copy(loading = false, name = name, text = text, cells = cells, tab = ext.toTab(), status = "Opened $name", dirty = false, sourceUri = uri.toString(), recoveryAvailable = false, searchQuery = "", searchCount = 0)
+                    _ui.value = _ui.value.copy(loading = false, name = name, text = text, cells = cells, tab = ext.toTab(), status = "Opened $name", dirty = false, sourceUri = uri.toString(), recoveryAvailable = false, searchQuery = "", searchCount = 0, calculationResult = null)
                     pushRecent(name, uri.toString()); undo.clear(); redo.clear(); recovery.clear()
                 },
                 onFailure = { error -> _ui.value = _ui.value.copy(loading = false, status = error.message ?: "Could not open file") }
@@ -63,7 +63,7 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
         recovery.clear()
     }
 
-    fun dismissRecovery() { recovery.clear(); _ui.value = _ui.value.copy(recoveryAvailable = false) }
+    fun dismissRecovery() { recovery.clear(); _ui.value = _ui.value.copy(recoveryAvailable = false, status = "Ready") }
     fun newDocument() { undo.clear(); redo.clear(); autosaveJob?.cancel(); recovery.clear(); _ui.value = MyDocUiState(tab = 1, name = "Untitled.docx", status = "New document", recent = loadRecent()) }
 
     fun setText(value: String) {
@@ -80,7 +80,7 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
         while (mutable.size <= row) mutable.add(MutableList(26) { "" })
         while (mutable[row].size <= col) mutable[row].add("")
         mutable[row][col] = value.take(10_000)
-        _ui.value = _ui.value.copy(cells = mutable.map { it.toList() }, dirty = true, status = "Modified")
+        _ui.value = _ui.value.copy(cells = mutable.map { it.toList() }, dirty = true, status = "Modified", calculationResult = null)
         scheduleAutosave()
     }
 
@@ -90,21 +90,26 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
     fun setTab(value: Int) { _ui.value = _ui.value.copy(tab = value) }
 
     fun find(query: String) {
-        val count = if (query.isEmpty()) 0 else Regex(Regex.escape(query)).findAll(_ui.value.text).count()
-        _ui.value = _ui.value.copy(searchQuery = query.take(200), searchCount = count, status = if (count == 0) "No matches" else "$count match${if (count == 1) "" else "es"}")
+        val q = query.take(200)
+        val count = if (q.isEmpty()) 0 else Regex(Regex.escape(q)).findAll(_ui.value.text).count()
+        _ui.value = _ui.value.copy(searchQuery = q, searchCount = count, status = if (q.isEmpty()) "Ready" else if (count == 0) "No matches" else "$count match${if (count == 1) "" else "es"}")
     }
 
     fun replace(replacement: String, replaceAll: Boolean) {
         val q = _ui.value.searchQuery
         if (q.isEmpty()) return
         val (updated, count) = EditorUtils.replace(_ui.value.text, q, replacement.take(10_000), replaceAll)
-        if (count > 0) { snapshot(); _ui.value = _ui.value.copy(text = updated, dirty = true, searchCount = if (replaceAll) 0 else count, status = "Replaced $count match${if (count == 1) "" else "es"}"); scheduleAutosave() }
+        if (count > 0) {
+            snapshot()
+            _ui.value = _ui.value.copy(text = updated, dirty = true, searchCount = if (replaceAll) 0 else count, status = "Replaced $count match${if (count == 1) "" else "es"}")
+            scheduleAutosave()
+        }
     }
 
     fun evaluateCell(row: Int, col: Int) {
         val value = _ui.value.cells.getOrNull(row)?.getOrNull(col) ?: return
         val result = EditorUtils.evaluateSimpleFormula(value, _ui.value.cells) ?: return
-        _ui.value = _ui.value.copy(calculationResult = "$${'$'}{('A'.code + col).toChar()}${row + 1} = $result")
+        _ui.value = _ui.value.copy(calculationResult = "${('A'.code + col).toChar()}${row + 1} = $result")
     }
 
     fun undo() { val previous = undo.removeLastOrNull() ?: return; redo.addLast(snapshotOf(_ui.value)); _ui.value = previous.toState(_ui.value).copy(status = "Undo", dirty = true) }
@@ -134,7 +139,7 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
     private fun snapshot() { undo.addLast(snapshotOf(_ui.value)); while (undo.size > 50) undo.removeFirst(); redo.clear() }
     private fun snapshotOf(s: MyDocUiState) = EditorSnapshot(s.text, s.cells, s.bold, s.italic, s.underline)
     private fun EditorSnapshot.toState(base: MyDocUiState) = base.copy(text = text, cells = cells, bold = bold, italic = italic, underline = underline)
-    private fun parseGrid(text: String): List<List<String>> = text.lines().take(100).map { it.split('\t', ',').take(26) }
+    private fun parseGrid(text: String): List<List<String>> = text.lines().take(100).map { it.split('\t', ',').take(26).let { row -> row + List(maxOf(0, 8 - row.size)) { "" } } }
     private fun String.toTab() = when (this) { "pdf" -> 3; "xlsx", "xls", "xlsm", "csv" -> 2; "ppt", "pptx" -> 4; else -> 1 }
     private fun loadRecent(): List<RecentDocument> = prefs.getStringSet("items", emptySet()).orEmpty().mapNotNull { raw -> raw.split('|', limit = 2).takeIf { it.size == 2 }?.let { RecentDocument(it[0], it[1]) } }.take(10)
     private fun pushRecent(name: String, uri: String) { val updated = (listOf(RecentDocument(name, uri)) + loadRecent().filterNot { it.uri == uri }).take(10); prefs.edit().putStringSet("items", updated.map { "${it.name}|${it.uri}" }.toSet()).apply(); _ui.value = _ui.value.copy(recent = updated) }

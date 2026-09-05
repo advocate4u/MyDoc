@@ -18,11 +18,21 @@ class DocumentRepository(private val resolver: ContentResolver) {
     suspend fun exportDocx(text: String, output: File, bold: Boolean = false, italic: Boolean = false, underline: Boolean = false): Result<Unit> =
         writeBytes(output) { DocumentEngine.writeDocx(text, bold, italic, underline) }
 
-    suspend fun exportXlsx(cells: List<List<String>>, output: File): Result<Unit> =
-        writeBytes(output) { DocumentEngine.writeXlsx(cells) }
+    suspend fun exportXlsx(cells: List<List<String>>, output: File): Result<Unit> = writeBytes(output) { DocumentEngine.writeXlsx(cells) }
+    suspend fun exportPptx(text: String, output: File): Result<Unit> = writeBytes(output) { DocumentEngine.writePptx(text) }
 
-    suspend fun exportPptx(text: String, output: File): Result<Unit> =
-        writeBytes(output) { DocumentEngine.writePptx(text) }
+    suspend fun exportToUri(uri: Uri, extension: String, text: String, cells: List<List<String>> = emptyList(), bold: Boolean = false, italic: Boolean = false, underline: Boolean = false): Result<Unit> =
+        withContext(AppDispatchers.io) {
+            runCatching {
+                val bytes = when (extension.lowercase()) {
+                    "docx" -> DocumentEngine.writeDocx(text, bold, italic, underline)
+                    "xlsx" -> DocumentEngine.writeXlsx(cells)
+                    "pptx" -> DocumentEngine.writePptx(text)
+                    else -> text.toByteArray(Charsets.UTF_8)
+                }
+                resolver.openOutputStream(uri, "w")?.use { it.write(bytes) } ?: error("Unable to save document")
+            }
+        }
 
     suspend fun writePdf(text: String, output: File): Result<Unit> = withContext(AppDispatchers.io) {
         runCatching { DocumentEngine.writePdf(text, output) }

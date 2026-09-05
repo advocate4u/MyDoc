@@ -1,5 +1,6 @@
 package com.advocate4u.mydoc
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -16,6 +17,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -27,6 +30,9 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.advocate4u.mydoc.core.FileFormat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.min
 
@@ -43,13 +49,15 @@ class MainActivity : ComponentActivity() {
 fun MyDocApp(vm: MyDocViewModel, initialUri: Uri?) {
     val state by vm.ui.collectAsStateWithLifecycle()
     val tabs = listOf("Home", "Word", "Excel", "PDF", "More")
-    var saveExtension by remember { mutableStateOf("docx") }
     var searchText by remember { mutableStateOf("") }
     var replacementText by remember { mutableStateOf("") }
     var showFind by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::open) }
-    val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri -> uri?.let { vm.save(it, saveExtension) } }
+    val docxSave = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(FileFormat.DOCX.mime)) { uri -> uri?.let { vm.save(it, "docx") } }
+    val xlsxSave = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(FileFormat.XLSX.mime)) { uri -> uri?.let { vm.save(it, "xlsx") } }
+    val pdfSave = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(FileFormat.PDF.mime)) { uri -> uri?.let { vm.save(it, "pdf") } }
+    val pptxSave = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(FileFormat.PPTX.mime)) { uri -> uri?.let { vm.save(it, "pptx") } }
     var handledInitial by remember(initialUri) { mutableStateOf(false) }
     LaunchedEffect(initialUri) { if (!handledInitial) { handledInitial = true; initialUri?.let(vm::open) } }
 
@@ -85,12 +93,25 @@ fun MyDocApp(vm: MyDocViewModel, initialUri: Uri?) {
                 if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 TextButton(onClick = { openLauncher.launch(arrayOf("*/*")) }) { Text("Open") }
                 TextButton(onClick = { showFind = true }) { Text("Find") }
-                if (state.sourceUri != null) TextButton(onClick = {
-                    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "application/octet-stream"; putExtra(Intent.EXTRA_STREAM, Uri.parse(state.sourceUri)); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "Share document"))
-                }) { Text("Share") }
+                state.sourceUri?.let { source ->
+                    TextButton(onClick = {
+                        val type = FileFormat.mimeForExtension(state.name.substringAfterLast('.', "txt"))
+                        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                            type = type
+                            putExtra(Intent.EXTRA_STREAM, Uri.parse(source))
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }, "Share document"))
+                    }) { Text("Share") }
+                }
                 TextButton(onClick = {
-                    saveExtension = when (state.tab) { 2 -> "xlsx"; 3 -> "pdf"; 4 -> "pptx"; else -> "docx" }
-                    saveLauncher.launch("${state.name.substringBeforeLast('.', "Untitled")}.${saveExtension}")
+                    val extension = when (state.tab) { 2 -> "xlsx"; 3 -> "pdf"; 4 -> "pptx"; else -> "docx" }
+                    val name = "${state.name.substringBeforeLast('.', "Untitled")}.${extension}"
+                    when (extension) {
+                        "xlsx" -> xlsxSave.launch(name)
+                        "pdf" -> pdfSave.launch(name)
+                        "pptx" -> pptxSave.launch(name)
+                        else -> docxSave.launch(name)
+                    }
                 }) { Text("Save") }
             })
         },
@@ -134,23 +155,32 @@ private fun WordEditor(state: MyDocUiState, vm: MyDocViewModel) {
             OutlinedButton(onClick = vm::undo) { Text("Undo") }
             OutlinedButton(onClick = vm::redo) { Text("Redo") }
         }
+        Text("${state.text.length} characters • ${state.text.lines().size} lines", style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(value = state.text, onValueChange = vm::setText, modifier = Modifier.fillMaxSize(), label = { Text(state.name) }, minLines = 20)
     }
 }
 
 @Composable
 private fun SpreadsheetEditor(state: MyDocUiState, vm: MyDocViewModel) {
+    val rows = state.cells.take(100)
+    val horizontal = rememberScrollState()
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Excel / XLSX", style = MaterialTheme.typography.headlineSmall)
-        Text("Supports a virtualized-size-safe editing range of 100 × 26 cells. Formulas are preserved on export.", style = MaterialTheme.typography.bodySmall)
+        Text("100 × 26 editing viewport • formula evaluation supports arithmetic and SUM/AVERAGE/MIN/MAX.", style = MaterialTheme.typography.bodySmall)
         state.calculationResult?.let { Text("Calculated: $it", style = MaterialTheme.typography.labelLarge) }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { OutlinedButton(onClick = vm::undo) { Text("Undo") }; OutlinedButton(onClick = vm::redo) { Text("Redo") } }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
-            state.cells.take(100).forEachIndexed { r, row ->
-                Row { row.take(26).forEachIndexed { c, value ->
-                    OutlinedTextField(value = value, onValueChange = { vm.setCell(r, c, it) }, modifier = Modifier.width(110.dp).height(64.dp), singleLine = true, label = { Text("${('A'.code + c).toChar()}${r + 1}") })
-                    if (value.startsWith("=")) TextButton(onClick = { vm.evaluateCell(r, c) }) { Text("=") }
-                } }
+        Row(Modifier.horizontalScroll(horizontal)) {
+            Text("#", Modifier.width(44.dp).padding(8.dp), style = MaterialTheme.typography.labelMedium)
+            (0 until 26).forEach { c -> Text(('A'.code + c).toChar().toString(), Modifier.width(110.dp).padding(8.dp), style = MaterialTheme.typography.labelMedium) }
+        }
+        LazyColumn(Modifier.fillMaxSize()) {
+            itemsIndexed(rows, key = { index, _ -> index }) { r, row ->
+                Row {
+                    Text("${r + 1}", Modifier.width(44.dp).padding(8.dp), style = MaterialTheme.typography.labelSmall)
+                    row.take(26).forEachIndexed { c, value ->
+                        OutlinedTextField(value = value, onValueChange = { vm.setCell(r, c, it) }, modifier = Modifier.width(110.dp).height(64.dp), singleLine = true, label = { Text("${('A'.code + c).toChar()}${r + 1}") })
+                    }
+                }
             }
         }
     }
@@ -173,6 +203,15 @@ private fun PdfViewer(uri: Uri) {
         onDispose { result.renderer?.close(); result.descriptor?.close() }
     }
     val renderer = session.renderer
+    var bitmap by remember(uri) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(renderer, page, zoom) {
+        bitmap?.recycle()
+        bitmap = null
+        if (renderer != null && page in 0 until renderer.pageCount) {
+            bitmap = withContext(Dispatchers.Default) { renderPdfPage(renderer, page, zoom) }
+        }
+    }
+    DisposableEffect(Unit) { onDispose { bitmap?.recycle() } }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             OutlinedButton(enabled = renderer != null && page > 0, onClick = { page-- }) { Text("Previous") }
@@ -182,23 +221,44 @@ private fun PdfViewer(uri: Uri) {
             OutlinedButton(onClick = { zoom = min(3f, zoom + 0.25f) }) { Text("+") }
         }
         session.error?.let { Text("PDF error: $it") }
-        if (renderer != null) AndroidView(modifier = Modifier.fillMaxSize(), factory = { PdfPageView(it) }, update = { it.bind(renderer, page, zoom) })
+        if (renderer != null) AndroidView(modifier = Modifier.fillMaxSize(), factory = { PdfPageView(it) }, update = { it.bind(bitmap) })
     }
 }
 
-private fun openPdf(context: android.content.Context, uri: Uri): PdfSession = try {
+private fun openPdf(context: Context, uri: Uri): PdfSession = try {
     val fd = context.contentResolver.openFileDescriptor(uri, "r") ?: return PdfSession(null, null, "Unable to open PDF")
     try { PdfSession(PdfRenderer(fd), fd, null) } catch (t: Throwable) { fd.close(); PdfSession(null, null, t.message ?: "Unable to render PDF") }
 } catch (t: Throwable) { PdfSession(null, null, t.message ?: "Unable to open PDF") }
 
-private class PdfPageView(context: android.content.Context) : android.view.View(context) {
+private fun renderPdfPage(renderer: PdfRenderer, pageIndex: Int, zoom: Float): Bitmap? = try {
+    if (pageIndex !in 0 until renderer.pageCount) return null
+    renderer.openPage(pageIndex).use { page ->
+        val scale = min(zoom, 3f)
+        val width = max(1, (page.width * scale).toInt())
+        val height = max(1, (page.height * scale).toInt())
+        Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+            it.eraseColor(Color.WHITE)
+            page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        }
+    }
+} catch (_: Throwable) { null }
+
+private class PdfPageView(context: Context) : android.view.View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var renderer: PdfRenderer? = null; private var pageIndex = -1; private var zoom = 1f; private var bitmap: Bitmap? = null
-    fun bind(renderer: PdfRenderer, pageIndex: Int, zoom: Float) { if (this.renderer !== renderer || this.pageIndex != pageIndex || this.zoom != zoom) { this.renderer = renderer; this.pageIndex = pageIndex; this.zoom = zoom; renderPage() } }
-    private fun renderPage() { bitmap?.recycle(); bitmap = null; val r = renderer ?: return; if (pageIndex !in 0 until r.pageCount) return; r.openPage(pageIndex).use { page -> val scale = min(zoom, 3f); val width = max(1, (page.width * scale).toInt()); val height = max(1, (page.height * scale).toInt()); bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { it.eraseColor(Color.WHITE); page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY) } }; requestLayout(); invalidate() }
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) { val b = bitmap; setMeasuredDimension(if (b == null) MeasureSpec.getSize(widthMeasureSpec) else b.width, if (b == null) MeasureSpec.getSize(heightMeasureSpec) else b.height) }
+    private var bitmap: Bitmap? = null
+    fun bind(newBitmap: Bitmap?) {
+        if (bitmap !== newBitmap) {
+            bitmap = newBitmap
+            requestLayout()
+            invalidate()
+        }
+    }
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val b = bitmap
+        setMeasuredDimension(if (b == null) MeasureSpec.getSize(widthMeasureSpec) else b.width, if (b == null) MeasureSpec.getSize(heightMeasureSpec) else b.height)
+    }
     override fun onDraw(canvas: Canvas) { super.onDraw(canvas); bitmap?.let { canvas.drawBitmap(it, 0f, 0f, paint) } }
-    override fun onDetachedFromWindow() { bitmap?.recycle(); bitmap = null; super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { bitmap = null; super.onDetachedFromWindow() }
 }
 
 @Composable private fun MoreFeatures(vm: MyDocViewModel) {
@@ -206,7 +266,7 @@ private class PdfPageView(context: android.content.Context) : android.view.View(
         Text("PowerPoint / PPTX", style = MaterialTheme.typography.headlineSmall)
         Text("Basic single-slide PPTX creation and text extraction are available now; the architecture is ready for multi-slide editing.")
         Text("Implemented foundations", style = MaterialTheme.typography.titleLarge)
-        Text("• Offline storage and recent documents\n• Persisted SAF read permission\n• Atomic exports\n• Bounded cache and input sizes\n• Background IO\n• Undo / redo\n• Crash recovery journal\n• Find / replace\n• Basic spreadsheet formulas\n• DOCX / XLSX / PPTX package generation\n• PDF export and page rendering\n• Share of opened documents")
+        Text("• Offline storage and recent documents\n• Persisted SAF read permission\n• Atomic exports\n• Bounded cache and input sizes\n• Background IO\n• Undo / redo\n• Crash recovery journal\n• Find / replace\n• Basic spreadsheet formulas\n• DOCX / XLSX / PPTX package generation\n• PDF export and background page rendering\n• Format-aware document sharing")
         Button(onClick = { vm.setTab(1) }) { Text("Open editor") }
     }
 }

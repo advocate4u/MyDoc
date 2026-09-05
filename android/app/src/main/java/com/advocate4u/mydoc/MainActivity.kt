@@ -1,73 +1,56 @@
 package com.advocate4u.mydoc
 
-import android.content.Context
 import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 class MainActivity : ComponentActivity() {
+    private val viewModel: MyDocViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MyDocApp(intent?.data) }
+        setContent { MyDocApp(viewModel, intent?.data) }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MyDocApp(initialUri: Uri?) {
-    val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(0) }
-    var editorText by remember { mutableStateOf("") }
-    var currentName by remember { mutableStateOf("Untitled") }
-    var status by remember { mutableStateOf("Ready") }
+fun MyDocApp(vm: MyDocViewModel, initialUri: Uri?) {
+    val state by vm.ui.collectAsStateWithLifecycle()
     val tabs = listOf("Home", "Word", "Excel", "PDF", "More")
-
-    fun openUri(uri: Uri) {
-        runCatching {
-            val name = uriName(context, uri) ?: "Document"
-            currentName = name
-            val ext = name.substringAfterLast('.', "txt")
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
-            editorText = DocumentEngine.readText(bytes, ext)
-            status = "Opened $name"
-            tab = when (ext.lowercase()) { "pdf" -> 3; "xlsx", "xls", "csv" -> 2; else -> 1 }
-        }.onFailure { status = "Could not open file" }
-    }
-
-    val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) openUri(uri)
-    }
-
-    LaunchedEffect(initialUri) { initialUri?.let { openUri(it) } }
+    val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::open) }
+    var handledInitial by remember(initialUri) { mutableStateOf(false) }
+    LaunchedEffect(initialUri) { if (!handledInitial) { handledInitial = true; initialUri?.let(vm::open) } }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("MyDoc") }, actions = {
+            if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             TextButton(onClick = { openLauncher.launch(arrayOf("*/*")) }) { Text("Open") }
         }) },
         bottomBar = { NavigationBar { tabs.forEachIndexed { i, label ->
-            NavigationBarItem(selected = tab == i, onClick = { tab = i }, icon = { Text(label.take(1)) }, label = { Text(label) })
+            NavigationBarItem(selected = state.tab == i, onClick = { vm.setTab(i) }, icon = { Text(label.take(1)) }, label = { Text(label) })
         } } }
     ) { padding ->
         Column(Modifier.padding(padding).padding(16.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("No account required • Offline first", style = MaterialTheme.typography.titleMedium)
-            Text(status, style = MaterialTheme.typography.bodySmall)
-            when (tab) {
-                0 -> HomeContent(onNew = { currentName = "Untitled"; editorText = ""; tab = 1 }, onOpen = { openLauncher.launch(arrayOf("*/*")) })
-                1 -> WordEditor(currentName, editorText, { editorText = it }, { status = "Changes saved locally" })
+            Text(state.status, style = MaterialTheme.typography.bodySmall)
+            when (state.tab) {
+                0 -> HomeContent(onNew = vm::newDocument, onOpen = { openLauncher.launch(arrayOf("*/*")) })
+                1 -> WordEditor(state.name, state.text, vm::setText)
                 2 -> SpreadsheetEditor()
-                3 -> PdfEditor(editorText)
+                3 -> PdfEditor(state.text)
                 else -> MoreFeatures()
             }
         }
@@ -84,7 +67,7 @@ fun MyDocApp(initialUri: Uri?) {
     Text("Word • Excel • PDF • PowerPoint")
 }
 
-@Composable private fun WordEditor(name: String, text: String, onTextChange: (String) -> Unit, onSave: () -> Unit) {
+@Composable private fun WordEditor(name: String, text: String, onTextChange: (String) -> Unit) {
     var bold by remember { mutableStateOf(false) }
     var italic by remember { mutableStateOf(false) }
     var underline by remember { mutableStateOf(false) }
@@ -93,40 +76,32 @@ fun MyDocApp(initialUri: Uri?) {
         FilterChip(selected = bold, onClick = { bold = !bold }, label = { Text("B") })
         FilterChip(selected = italic, onClick = { italic = !italic }, label = { Text("I") })
         FilterChip(selected = underline, onClick = { underline = !underline }, label = { Text("U") })
-        OutlinedButton(onClick = onSave) { Text("Save") }
     }
     OutlinedTextField(value = text, onValueChange = onTextChange, modifier = Modifier.fillMaxWidth().weight(1f), label = { Text(name) }, minLines = 20)
-    Text("Editor model supports the planned Office toolbar: fonts, size, styles, alignment, lists, tables, images, headers/footers and page layout.", style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable private fun SpreadsheetEditor() {
     Text("Excel / XLSX", style = MaterialTheme.typography.headlineSmall)
-    Text("Spreadsheet workspace")
     val cells = remember { mutableStateListOf(*Array(25) { "" }) }
     Column(Modifier.verticalScroll(rememberScrollState())) {
-        for (r in 0 until 5) {
-            Row {
-                for (c in 0 until 5) {
-                    val index = r * 5 + c
-                    OutlinedTextField(value = cells[index], onValueChange = { cells[index] = it }, modifier = Modifier.width(100.dp), singleLine = true, label = { Text("${('A'.code + c).toChar()}${r + 1}") })
-                }
+        for (r in 0 until 5) Row {
+            for (c in 0 until 5) {
+                val index = r * 5 + c
+                OutlinedTextField(value = cells[index], onValueChange = { cells[index] = it }, modifier = Modifier.width(100.dp), singleLine = true, label = { Text("${('A'.code + c).toChar()}${r + 1}") })
             }
         }
     }
-    Text("Spreadsheet engine roadmap: formulas, multiple sheets, cell formatting, merge, sort/filter, charts, freeze panes and XLSX import/export.", style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable private fun PdfEditor(text: String) {
     Text("PDF", style = MaterialTheme.typography.headlineSmall)
-    Text("PDF workspace")
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         OutlinedButton(onClick = {}) { Text("Zoom −") }
         OutlinedButton(onClick = {}) { Text("Zoom +") }
         OutlinedButton(onClick = {}) { Text("Annotate") }
         OutlinedButton(onClick = {}) { Text("Search") }
     }
-    Text(if (text.isBlank()) "Open a PDF to view it here." else text, modifier = Modifier.fillMaxWidth().weight(1f))
-    Text("PDF engine roadmap: page rendering, text selection, highlights, drawing, forms, signatures, page operations and export.", style = MaterialTheme.typography.bodySmall)
+    Text(if (text.isBlank()) "Open a PDF to view it here." else text, Modifier.fillMaxWidth().weight(1f))
 }
 
 @Composable private fun MoreFeatures() {
@@ -135,11 +110,4 @@ fun MyDocApp(initialUri: Uri?) {
     Text("Slides, text, images, shapes, formatting and presentation mode")
     Text("Common tools")
     Text("Print • Share • Convert • OCR • Search • Dark mode • AI assistance")
-}
-
-private fun uriName(context: Context, uri: Uri): String? {
-    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) return cursor.getString(0)
-    }
-    return uri.lastPathSegment?.substringAfterLast('/')
 }

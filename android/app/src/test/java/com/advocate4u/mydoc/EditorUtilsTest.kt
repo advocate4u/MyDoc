@@ -37,6 +37,12 @@ class EditorUtilsTest {
         assertEquals("1", EditorUtils.evaluateSimpleFormula("=COUNTIF(A1:B2,=3)", cells))
     }
 
+    @Test fun evaluatesRoundAndAbs() {
+        assertEquals("3.14", EditorUtils.evaluateSimpleFormula("=ROUND(3.14159,2)", emptyList()))
+        assertEquals("4", EditorUtils.evaluateSimpleFormula("=ROUND(A2)", cells))
+        assertEquals("7.5", EditorUtils.evaluateSimpleFormula("=ABS(-7.5)", emptyList()))
+    }
+
     @Test fun evaluatesIfComparison() {
         assertEquals("yes", EditorUtils.evaluateSimpleFormula("=IF(A1<B1,yes,no)", cells))
         assertEquals("ok", EditorUtils.evaluateSimpleFormula("=IF(5>=5,ok,bad)", emptyList()))

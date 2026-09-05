@@ -7,10 +7,10 @@ import com.advocate4u.mydoc.core.AppDispatchers
 import kotlinx.coroutines.withContext
 
 class DocumentRepository(private val resolver: ContentResolver) {
-    suspend fun read(uri: Uri, extension: String): Result<String> = withContext(AppDispatchers.io) {
+    suspend fun read(uri: Uri, extension: String, cacheKey: String? = null): Result<String> = withContext(AppDispatchers.io) {
         runCatching {
             resolver.openInputStream(uri)?.use { input ->
-                DocumentEngine.readText(input, extension)
+                DocumentEngine.readText(input, extension, cacheKey)
             } ?: error("Unable to open document")
         }
     }

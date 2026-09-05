@@ -133,8 +133,8 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = _ui.value.copy(calculationResult = "${('A'.code + col).toChar()}${row + 1} = $result")
     }
 
-    fun undo() { val previous = undo.removeLastOrNull() ?: return; redo.addLast(snapshotOf(_ui.value)); _ui.value = previous.toState(_ui.value).copy(status = "Undo", dirty = true) }
-    fun redo() { val next = redo.removeLastOrNull() ?: return; undo.addLast(snapshotOf(_ui.value)); _ui.value = next.toState(_ui.value).copy(status = "Redo", dirty = true) }
+    fun undo() { val previous = undo.removeLastOrNull() ?: return; redo.addLast(snapshotOf(_ui.value)); _ui.value = previous.toState(_ui.value).copy(status = "Undo", dirty = true); scheduleAutosave() }
+    fun redo() { val next = redo.removeLastOrNull() ?: return; undo.addLast(snapshotOf(_ui.value)); _ui.value = next.toState(_ui.value).copy(status = "Redo", dirty = true); scheduleAutosave() }
 
     fun save(uri: Uri, extension: String) {
         val state = _ui.value
@@ -149,10 +149,29 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun scheduleAutosave() {
-        autosaveJob?.cancel(); autosaveJob = viewModelScope.launch {
-            delay(1500); if (!isActive || !_ui.value.dirty) return@launch
+        autosaveJob?.cancel()
+        autosaveJob = viewModelScope.launch {
+            delay(1500)
+            if (!isActive || !_ui.value.dirty) return@launch
             val snapshot = _ui.value
-            withContext(AppDispatchers.io) { runCatching { recovery.write(snapshot.name, snapshot.name.substringAfterLast('.', "docx"), snapshot.text.take(5_000_000)) } }
+            val source = snapshot.sourceUri
+            val extension = snapshot.name.substringAfterLast('.', "").lowercase()
+            if (source != null && extension in setOf("docx", "xlsx", "xls", "xlsm", "pptx", "ppt", "txt", "csv")) {
+                val result = withContext(AppDispatchers.io) {
+                    repository.exportToUri(Uri.parse(source), extension, snapshot.text, snapshot.cells, snapshot.bold, snapshot.italic, snapshot.underline)
+                }
+                if (result.isSuccess) {
+                    val current = _ui.value
+                    if (current.sourceUri == source && current.text == snapshot.text && current.cells == snapshot.cells && current.bold == snapshot.bold && current.italic == snapshot.italic && current.underline == snapshot.underline) {
+                        _ui.value = current.copy(loading = false, dirty = false, status = "Saved automatically")
+                        recovery.clear()
+                    }
+                }
+            } else {
+                withContext(AppDispatchers.io) {
+                    runCatching { recovery.write(snapshot.name, extension.ifEmpty { "docx" }, snapshot.text.take(5_000_000)) }
+                }
+            }
         }
     }
 

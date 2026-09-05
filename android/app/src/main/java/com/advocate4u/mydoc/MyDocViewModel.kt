@@ -141,8 +141,24 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
     private fun EditorSnapshot.toState(base: MyDocUiState) = base.copy(text = text, cells = cells, bold = bold, italic = italic, underline = underline)
     private fun parseGrid(text: String): List<List<String>> = text.lines().take(100).map { it.split('\t', ',').take(26).let { row -> row + List(maxOf(0, 8 - row.size)) { "" } } }
     private fun String.toTab() = when (this) { "pdf" -> 3; "xlsx", "xls", "xlsm", "csv" -> 2; "ppt", "pptx" -> 4; else -> 1 }
-    private fun loadRecent(): List<RecentDocument> = prefs.getStringSet("items", emptySet()).orEmpty().mapNotNull { raw -> raw.split('|', limit = 2).takeIf { it.size == 2 }?.let { RecentDocument(it[0], it[1]) } }.take(10)
-    private fun pushRecent(name: String, uri: String) { val updated = (listOf(RecentDocument(name, uri)) + loadRecent().filterNot { it.uri == uri }).take(10); prefs.edit().putStringSet("items", updated.map { "${it.name}|${it.uri}" }.toSet()).apply(); _ui.value = _ui.value.copy(recent = updated) }
+
+    /** SharedPreferences StringSet is unordered; indexed keys preserve actual MRU order. */
+    private fun loadRecent(): List<RecentDocument> = buildList {
+        for (i in 0 until 10) {
+            val raw = prefs.getString("item_$i", null) ?: continue
+            val parts = raw.split('|', limit = 2)
+            if (parts.size == 2) add(RecentDocument(parts[0], parts[1]))
+        }
+    }
+
+    private fun pushRecent(name: String, uri: String) {
+        val updated = (listOf(RecentDocument(name, uri)) + loadRecent().filterNot { it.uri == uri }).take(10)
+        prefs.edit().apply {
+            for (i in 0 until 10) remove("item_$i")
+            updated.forEachIndexed { i, item -> putString("item_$i", "${item.name}|${item.uri}") }
+        }.apply()
+        _ui.value = _ui.value.copy(recent = updated)
+    }
 }
 
 data class RecentDocument(val name: String, val uri: String)

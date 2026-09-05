@@ -4,8 +4,18 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-android { namespace = "com.advocate4u.mydoc"; compileSdk = 35
-    defaultConfig { applicationId = "com.advocate4u.mydoc"; minSdk = 26; targetSdk = 35; versionCode = 1; versionName = "0.1.0" }
+android {
+    namespace = "com.advocate4u.mydoc"
+    compileSdk = 35
+    defaultConfig {
+        applicationId = "com.advocate4u.mydoc"
+        minSdk = 26
+        targetSdk = 35
+        versionCode = 1
+        versionName = "0.1.0"
+    }
+    buildFeatures { compose = true }
+    packaging { resources.excludes += setOf("META-INF/NOTICE*", "META-INF/LICENSE*") }
 }
 
 dependencies {
@@ -15,5 +25,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

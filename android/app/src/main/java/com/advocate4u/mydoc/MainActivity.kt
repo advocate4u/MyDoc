@@ -43,21 +43,35 @@ fun MyDocApp(vm: MyDocViewModel, initialUri: Uri?) {
     val state by vm.ui.collectAsStateWithLifecycle()
     val tabs = listOf("Home", "Word", "Excel", "PDF", "More")
     var saveExtension by remember { mutableStateOf("docx") }
-    val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let(vm::open) }
+    val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::open) }
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri -> uri?.let { vm.save(it, saveExtension) } }
     var handledInitial by remember(initialUri) { mutableStateOf(false) }
-    LaunchedEffect(initialUri) { if (!handledInitial) { handledInitial = true; initialUri?.let(vm::open) } }
+    LaunchedEffect(initialUri) {
+        if (!handledInitial) {
+            handledInitial = true
+            initialUri?.let(vm::open)
+        }
+    }
 
-    Scaffold(topBar = {
-        TopAppBar(title = { Text("MyDoc${if (state.dirty) " •" else ""}") }, actions = {
-            if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-            TextButton(onClick = { openLauncher.launch(arrayOf("*/*")) }) { Text("Open") }
-            TextButton(onClick = {
-                saveExtension = when (state.tab) { 2 -> "xlsx"; 3 -> "pdf"; 4 -> "pptx"; else -> "docx" }
-                saveLauncher.launch("${state.name.substringBeforeLast('.', "Untitled")}.${saveExtension}")
-            }) { Text("Save") }
-        })
-    }, bottomBar = { NavigationBar { tabs.forEachIndexed { i, label -> NavigationBarItem(selected = state.tab == i, onClick = { vm.setTab(i) }, icon = { Text(label.take(1)) }, label = { Text(label) }) } } }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(title = { Text("MyDoc${if (state.dirty) " •" else ""}") }, actions = {
+                if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                TextButton(onClick = { openLauncher.launch(arrayOf("*/*")) }) { Text("Open") }
+                TextButton(onClick = {
+                    saveExtension = when (state.tab) { 2 -> "xlsx"; 3 -> "pdf"; 4 -> "pptx"; else -> "docx" }
+                    saveLauncher.launch("${state.name.substringBeforeLast('.', "Untitled")}.${saveExtension}")
+                }) { Text("Save") }
+            })
+        },
+        bottomBar = {
+            NavigationBar {
+                tabs.forEachIndexed { i, label ->
+                    NavigationBarItem(selected = state.tab == i, onClick = { vm.setTab(i) }, icon = { Text(label.take(1)) }, label = { Text(label) })
+                }
+            }
+        }
+    ) { padding ->
         Column(Modifier.padding(padding).padding(12.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(state.status, style = MaterialTheme.typography.bodySmall)
             when (state.tab) {
@@ -71,36 +85,53 @@ fun MyDocApp(vm: MyDocViewModel, initialUri: Uri?) {
     }
 }
 
-@Composable private fun HomeContent(recent: List<RecentDocument>, onNew: () -> Unit, onOpen: () -> Unit, vm: MyDocViewModel) {
-    Text("MyDoc", style = MaterialTheme.typography.headlineLarge)
-    Text("Offline-first document workspace • no account required")
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Button(onClick = onNew) { Text("New document") }; OutlinedButton(onClick = onOpen) { Text("Open file") } }
-    Text("Recent documents", style = MaterialTheme.typography.titleLarge)
-    if (recent.isEmpty()) Text("No recent documents")
-    recent.forEach { item -> OutlinedButton(onClick = { vm.open(Uri.parse(item.uri)) }, modifier = Modifier.fillMaxWidth()) { Text(item.name) } }
-}
-
-@Composable private fun WordEditor(state: MyDocUiState, vm: MyDocViewModel) {
-    Text("Word / DOCX", style = MaterialTheme.typography.headlineSmall)
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        FilterChip(state.bold, vm::toggleBold, label = { Text("B", fontWeight = FontWeight.Bold) })
-        FilterChip(state.italic, vm::toggleItalic, label = { Text("I") })
-        FilterChip(state.underline, vm::toggleUnderline, label = { Text("U", textDecoration = TextDecoration.Underline) })
-        OutlinedButton(onClick = vm::undo) { Text("Undo") }
-        OutlinedButton(onClick = vm::redo) { Text("Redo") }
+@Composable
+private fun HomeContent(recent: List<RecentDocument>, onNew: () -> Unit, onOpen: () -> Unit, vm: MyDocViewModel) {
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("MyDoc", style = MaterialTheme.typography.headlineLarge)
+        Text("Offline-first document workspace • no account required")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = onNew) { Text("New document") }
+            OutlinedButton(onClick = onOpen) { Text("Open file") }
+        }
+        Text("Recent documents", style = MaterialTheme.typography.titleLarge)
+        if (recent.isEmpty()) Text("No recent documents")
+        recent.forEach { item ->
+            OutlinedButton(onClick = { vm.open(Uri.parse(item.uri)) }, modifier = Modifier.fillMaxWidth()) { Text(item.name) }
+        }
     }
-    OutlinedTextField(value = state.text, onValueChange = vm::setText, modifier = Modifier.fillMaxWidth().weight(1f), label = { Text(state.name) }, minLines = 20)
 }
 
-@Composable private fun SpreadsheetEditor(state: MyDocUiState, vm: MyDocViewModel) {
-    Text("Excel / XLSX", style = MaterialTheme.typography.headlineSmall)
-    Text("Formula cells start with = and are preserved in XLSX export.", style = MaterialTheme.typography.bodySmall)
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { OutlinedButton(onClick = vm::undo) { Text("Undo") }; OutlinedButton(onClick = vm::redo) { Text("Redo") } }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
-        state.cells.forEachIndexed { r, row ->
-            Row {
-                row.forEachIndexed { c, value ->
-                    OutlinedTextField(value = value, onValueChange = { vm.setCell(r, c, it) }, modifier = Modifier.width(110.dp).height(64.dp), singleLine = true, label = { Text("${('A'.code + c).toChar()}${r + 1}") })
+@Composable
+private fun WordEditor(state: MyDocUiState, vm: MyDocViewModel) {
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Word / DOCX", style = MaterialTheme.typography.headlineSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected = state.bold, onClick = vm::toggleBold, label = { Text("B", fontWeight = FontWeight.Bold) })
+            FilterChip(selected = state.italic, onClick = vm::toggleItalic, label = { Text("I") })
+            FilterChip(selected = state.underline, onClick = vm::toggleUnderline, label = { Text("U", textDecoration = TextDecoration.Underline) })
+            OutlinedButton(onClick = vm::undo) { Text("Undo") }
+            OutlinedButton(onClick = vm::redo) { Text("Redo") }
+        }
+        OutlinedTextField(value = state.text, onValueChange = vm::setText, modifier = Modifier.fillMaxSize(), label = { Text(state.name) }, minLines = 20)
+    }
+}
+
+@Composable
+private fun SpreadsheetEditor(state: MyDocUiState, vm: MyDocViewModel) {
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Excel / XLSX", style = MaterialTheme.typography.headlineSmall)
+        Text("Formula cells start with = and are preserved in XLSX export.", style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = vm::undo) { Text("Undo") }
+            OutlinedButton(onClick = vm::redo) { Text("Redo") }
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
+            state.cells.forEachIndexed { r, row ->
+                Row {
+                    row.forEachIndexed { c, value ->
+                        OutlinedTextField(value = value, onValueChange = { vm.setCell(r, c, it) }, modifier = Modifier.width(110.dp).height(64.dp), singleLine = true, label = { Text("${('A'.code + c).toChar()}${r + 1}") })
+                    }
                 }
             }
         }
@@ -108,55 +139,64 @@ fun MyDocApp(vm: MyDocViewModel, initialUri: Uri?) {
 }
 
 @Composable private fun PdfEditor(uri: Uri?) {
-    Text("PDF", style = MaterialTheme.typography.headlineSmall)
-    if (uri == null) {
-        Surface(Modifier.fillMaxWidth().weight(1f), tonalElevation = 2.dp) { Text("Open a PDF to view it.", Modifier.padding(18.dp)) }
-    } else {
-        PdfViewer(uri)
+    Column(Modifier.fillMaxSize()) {
+        Text("PDF", style = MaterialTheme.typography.headlineSmall)
+        if (uri == null) {
+            Surface(Modifier.fillMaxSize(), tonalElevation = 2.dp) { Text("Open a PDF to view it.", Modifier.padding(18.dp)) }
+        } else PdfViewer(uri)
     }
 }
 
-@Composable private fun PdfViewer(uri: Uri) {
+private data class PdfSession(val renderer: PdfRenderer?, val descriptor: ParcelFileDescriptor?, val error: String?)
+
+@Composable
+private fun PdfViewer(uri: Uri) {
     val context = LocalContext.current
     var page by remember(uri) { mutableIntStateOf(0) }
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
-    var error by remember(uri) { mutableStateOf<String?>(null) }
-    var renderer by remember(uri) { mutableStateOf<PdfRenderer?>(null) }
-    var descriptor by remember(uri) { mutableStateOf<ParcelFileDescriptor?>(null) }
+    var session by remember(uri) { mutableStateOf(PdfSession(null, null, null)) }
 
     DisposableEffect(uri, context) {
-        try {
-            val fd = context.contentResolver.openFileDescriptor(uri, "r") ?: error("Unable to open PDF")
-            descriptor = fd
-            renderer = PdfRenderer(fd)
-            page = 0
-            error = null
-        } catch (t: Throwable) {
-            error = t.message ?: "Unable to render PDF"
-        }
+        val result = openPdf(context, uri)
+        session = result
+        page = 0
         onDispose {
-            renderer?.close()
-            descriptor?.close()
-            renderer = null
-            descriptor = null
+            result.renderer?.close()
+            result.descriptor?.close()
         }
     }
 
-    val r = renderer
+    val renderer = session.renderer
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(enabled = r != null && page > 0, onClick = { page-- }) { Text("Previous") }
-            Text(if (r == null) "Page —" else "Page ${page + 1} / ${r.pageCount}", modifier = Modifier.padding(top = 12.dp))
-            OutlinedButton(enabled = r != null && page < r.pageCount - 1, onClick = { page++ }) { Text("Next") }
+            OutlinedButton(enabled = renderer != null && page > 0, onClick = { page-- }) { Text("Previous") }
+            Text(if (renderer == null) "Page —" else "Page ${page + 1} / ${renderer.pageCount}", modifier = Modifier.padding(top = 12.dp))
+            OutlinedButton(enabled = renderer != null && page < renderer.pageCount - 1, onClick = { page++ }) { Text("Next") }
             OutlinedButton(onClick = { zoom = max(0.5f, zoom - 0.25f) }) { Text("−") }
             OutlinedButton(onClick = { zoom = min(3f, zoom + 0.25f) }) { Text("+") }
         }
-        if (error != null) Text("PDF error: $error")
-        else if (r != null) AndroidView(
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            factory = { PdfPageView(it) },
-            update = { it.bind(r, page, zoom) }
-        )
+        session.error?.let { Text("PDF error: $it") }
+        if (renderer != null) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { PdfPageView(it) },
+                update = { it.bind(renderer, page, zoom) }
+            )
+        }
+    }
+}
+
+private fun openPdf(context: android.content.Context, uri: Uri): PdfSession {
+    return try {
+        val fd = context.contentResolver.openFileDescriptor(uri, "r") ?: return PdfSession(null, null, "Unable to open PDF")
+        try {
+            PdfSession(PdfRenderer(fd), fd, null)
+        } catch (t: Throwable) {
+            fd.close()
+            PdfSession(null, null, t.message ?: "Unable to render PDF")
+        }
+    } catch (t: Throwable) {
+        PdfSession(null, null, t.message ?: "Unable to open PDF")
     }
 }
 
@@ -214,9 +254,11 @@ private class PdfPageView(context: android.content.Context) : android.view.View(
 }
 
 @Composable private fun MoreFeatures(vm: MyDocViewModel) {
-    Text("PowerPoint / PPTX", style = MaterialTheme.typography.headlineSmall)
-    Text("Create a basic slide package from the current document and export it as PPTX.")
-    Text("Built-in foundations", style = MaterialTheme.typography.titleLarge)
-    Text("• Offline storage and recent documents\n• Atomic exports\n• Bounded text cache\n• Background IO\n• Undo / redo\n• Crash-safe recovery snapshot\n• DOCX / XLSX / PPTX package generation\n• PDF export\n• Offline PDF page rendering")
-    Button(onClick = { vm.setTab(1) }) { Text("Open editor") }
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("PowerPoint / PPTX", style = MaterialTheme.typography.headlineSmall)
+        Text("Create a basic slide package from the current document and export it as PPTX.")
+        Text("Built-in foundations", style = MaterialTheme.typography.titleLarge)
+        Text("• Offline storage and recent documents\n• Atomic exports\n• Bounded text cache\n• Background IO\n• Undo / redo\n• Crash-safe recovery snapshot\n• DOCX / XLSX / PPTX package generation\n• PDF export\n• Offline PDF page rendering")
+        Button(onClick = { vm.setTab(1) }) { Text("Open editor") }
+    }
 }

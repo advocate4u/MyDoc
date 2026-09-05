@@ -1,6 +1,7 @@
 package com.advocate4u.mydoc
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DocumentEngineTest {
@@ -9,9 +10,9 @@ class DocumentEngineTest {
         assertEquals(source, DocumentEngine.readText(source.toByteArray(), "txt"))
     }
 
-    @Test fun docxWriterProducesNonEmptyPackage() {
+    @Test fun docxWriterProducesReadablePackage() {
         val bytes = DocumentEngine.writeDocx("Hello")
-        assert(bytes.isNotEmpty())
-        assertEquals("", DocumentEngine.readText(bytes, "docx").trim())
+        assertTrue(bytes.isNotEmpty())
+        assertEquals("Hello", DocumentEngine.readText(bytes, "docx").trim())
     }
 }

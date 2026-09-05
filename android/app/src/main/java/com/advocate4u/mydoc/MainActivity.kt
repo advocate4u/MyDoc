@@ -14,7 +14,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
@@ -138,9 +137,6 @@ private fun PdfViewer(uri: Uri) {
     val renderer = session.renderer
     var bitmap by remember(uri) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(renderer, page, zoom) {
-        // Do not recycle the bitmap currently owned by AndroidView: a pinch can
-        // replace it while the View is drawing, which can crash with
-        // "Canvas: trying to use a recycled bitmap".
         delay(80)
         if (renderer != null && page in 0 until renderer.pageCount) {
             val rendered = withContext(Dispatchers.Default) { renderPdfPage(renderer, page, zoom) }
@@ -183,7 +179,6 @@ private fun renderPdfPage(renderer: PdfRenderer, pageIndex: Int, zoom: Float): B
         if (pageIndex !in 0 until renderer.pageCount) return null
         renderer.openPage(pageIndex).use { page ->
             val scale = zoom.coerceIn(0.5f, 3f)
-            // Avoid allocating an unbounded bitmap for large PDF pages at high zoom.
             val maxPixels = 16_000_000L
             var width = max(1, (page.width * scale).toInt())
             var height = max(1, (page.height * scale).toInt())
@@ -193,10 +188,7 @@ private fun renderPdfPage(renderer: PdfRenderer, pageIndex: Int, zoom: Float): B
                 width = max(1, (width * factor).toInt())
                 height = max(1, (height * factor).toInt())
             }
-            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
-                it.eraseColor(Color.WHITE)
-                page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            }
+            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { it.eraseColor(Color.WHITE); page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY) }
         }
     }
 } catch (_: Throwable) { null }

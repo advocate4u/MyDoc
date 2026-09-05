@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
@@ -34,6 +35,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.advocate4u.mydoc.core.FileFormat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.min
@@ -81,10 +83,7 @@ private fun HomeContent(recent: List<RecentDocument>, onNew: () -> Unit, onOpen:
         Text("MyDoc", style = MaterialTheme.typography.headlineLarge)
         Text("Offline-first document workspace • no account required")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Button(onClick = onNew) { Text("New document") }; OutlinedButton(onClick = onOpen) { Text("Open file") } }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Recent documents", style = MaterialTheme.typography.titleLarge)
-            if (recent.isNotEmpty()) TextButton(onClick = vm::clearRecent) { Text("Clear all") }
-        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Recent documents", style = MaterialTheme.typography.titleLarge); if (recent.isNotEmpty()) TextButton(onClick = vm::clearRecent) { Text("Clear all") } }
         if (recent.isEmpty()) Text("No recent documents")
         recent.forEach { item ->
             var menuOpen by remember(item.uri) { mutableStateOf(false) }
@@ -92,13 +91,7 @@ private fun HomeContent(recent: List<RecentDocument>, onNew: () -> Unit, onOpen:
             var renameText by remember(item.uri) { mutableStateOf(item.name) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedButton(onClick = { vm.open(Uri.parse(item.uri)) }, modifier = Modifier.weight(1f)) { Text(item.name, maxLines = 1) }
-                Box {
-                    TextButton(onClick = { menuOpen = true }) { Text("⋮") }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; renameText = item.name; renameOpen = true })
-                        DropdownMenuItem(text = { Text("Remove from recent") }, onClick = { menuOpen = false; vm.removeRecent(item) })
-                    }
-                }
+                Box { TextButton(onClick = { menuOpen = true }) { Text("⋮") }; DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) { DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; renameText = item.name; renameOpen = true }); DropdownMenuItem(text = { Text("Remove from recent") }, onClick = { menuOpen = false; vm.removeRecent(item) }) } }
             }
             if (renameOpen) AlertDialog(onDismissRequest = { renameOpen = false }, title = { Text("Rename recent document") }, text = { OutlinedTextField(renameText, { renameText = it }, singleLine = true, label = { Text("Name") }) }, confirmButton = { Button(onClick = { if (vm.renameRecent(item, renameText)) renameOpen = false }) { Text("Rename") } }, dismissButton = { TextButton(onClick = { renameOpen = false }) { Text("Cancel") } })
         }
@@ -144,8 +137,17 @@ private fun PdfViewer(uri: Uri) {
     DisposableEffect(uri, context) { val result = openPdf(context, uri); session = result; page = 0; onDispose { result.renderer?.let { synchronized(it) { it.close() } }; result.descriptor?.close() } }
     val renderer = session.renderer
     var bitmap by remember(uri) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(renderer, page, zoom) { bitmap?.recycle(); bitmap = null; if (renderer != null && page in 0 until renderer.pageCount) bitmap = withContext(Dispatchers.Default) { renderPdfPage(renderer, page, zoom) } }
-    DisposableEffect(Unit) { onDispose { bitmap?.recycle() } }
+    LaunchedEffect(renderer, page, zoom) {
+        // Do not recycle the bitmap currently owned by AndroidView: a pinch can
+        // replace it while the View is drawing, which can crash with
+        // "Canvas: trying to use a recycled bitmap".
+        delay(80)
+        if (renderer != null && page in 0 until renderer.pageCount) {
+            val rendered = withContext(Dispatchers.Default) { renderPdfPage(renderer, page, zoom) }
+            if (rendered != null) bitmap = rendered
+        }
+    }
+    DisposableEffect(Unit) { onDispose { bitmap = null } }
 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -176,7 +178,28 @@ private fun PdfViewer(uri: Uri) {
 
 private fun openPdf(context: Context, uri: Uri): PdfSession = try { val fd = context.contentResolver.openFileDescriptor(uri, "r") ?: return PdfSession(null, null, "Unable to open PDF"); try { PdfSession(PdfRenderer(fd), fd, null) } catch (t: Throwable) { fd.close(); PdfSession(null, null, t.message ?: "Unable to render PDF") } } catch (t: Throwable) { PdfSession(null, null, t.message ?: "Unable to open PDF") }
 
-private fun renderPdfPage(renderer: PdfRenderer, pageIndex: Int, zoom: Float): Bitmap? = try { synchronized(renderer) { if (pageIndex !in 0 until renderer.pageCount) return null; renderer.openPage(pageIndex).use { page -> val scale = zoom.coerceIn(0.5f, 3f); val width = max(1, (page.width * scale).toInt()); val height = max(1, (page.height * scale).toInt()); Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { it.eraseColor(Color.WHITE); page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY) } } } } catch (_: Throwable) { null }
+private fun renderPdfPage(renderer: PdfRenderer, pageIndex: Int, zoom: Float): Bitmap? = try {
+    synchronized(renderer) {
+        if (pageIndex !in 0 until renderer.pageCount) return null
+        renderer.openPage(pageIndex).use { page ->
+            val scale = zoom.coerceIn(0.5f, 3f)
+            // Avoid allocating an unbounded bitmap for large PDF pages at high zoom.
+            val maxPixels = 16_000_000L
+            var width = max(1, (page.width * scale).toInt())
+            var height = max(1, (page.height * scale).toInt())
+            val pixels = width.toLong() * height.toLong()
+            if (pixels > maxPixels) {
+                val factor = kotlin.math.sqrt(maxPixels.toDouble() / pixels).toFloat()
+                width = max(1, (width * factor).toInt())
+                height = max(1, (height * factor).toInt())
+            }
+            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+                it.eraseColor(Color.WHITE)
+                page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            }
+        }
+    }
+} catch (_: Throwable) { null }
 
 private class PdfPageView(context: Context) : android.view.View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)

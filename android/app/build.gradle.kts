@@ -14,7 +14,37 @@ android {
         versionCode = 1
         versionName = "0.1.0"
     }
+
+    signingConfigs {
+        create("release") {
+            val keystoreFile = System.getenv("MYADV_KEYSTORE_FILE")
+            val storePassword = System.getenv("MYADV_STORE_PASSWORD")
+            val keyAlias = System.getenv("MYADV_KEY_ALIAS")
+            val keyPassword = System.getenv("MYADV_KEY_PASSWORD")
+
+            require(!keystoreFile.isNullOrBlank()) { "MYADV_KEYSTORE_FILE is required for release signing" }
+            require(!storePassword.isNullOrBlank()) { "MYADV_STORE_PASSWORD is required for release signing" }
+            require(!keyAlias.isNullOrBlank()) { "MYADV_KEY_ALIAS is required for release signing" }
+            require(!keyPassword.isNullOrBlank()) { "MYADV_KEY_PASSWORD is required for release signing" }
+            require(file(keystoreFile).isFile) { "Release keystore not found: $keystoreFile" }
+
+            storeFile = file(keystoreFile)
+            this.storePassword = storePassword
+            this.keyAlias = keyAlias
+            this.keyPassword = keyPassword
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+    }
+
     buildFeatures { compose = true }
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

@@ -1,6 +1,9 @@
 package com.advocate4u.mydoc.core
 
+import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.pow
+import kotlin.math.round
 
 /** Spreadsheet-safe helpers shared by Word and spreadsheet features. */
 object EditorUtils {
@@ -51,6 +54,26 @@ object EditorUtils {
             return range.count { it == criterion }.toString()
         }
 
+        val scalar = Regex("(?i)^(ABS)\\(([^()]*)\\)$").matchEntire(expr)
+        if (scalar != null) {
+            val number = operandValue(scalar.groupValues[2].trim(), cells) ?: return null
+            return when (scalar.groupValues[1].uppercase()) {
+                "ABS" -> abs(number).format()
+                else -> null
+            }
+        }
+
+        val round = Regex("(?i)^ROUND\\(([^()]*)\\)$").matchEntire(expr)
+        if (round != null) {
+            val args = round.groupValues[1].split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            if (args !in listOf(1, 2)) return null
+            val number = operandValue(args[0], cells) ?: return null
+            val digits = if (args.size == 2) args[1].toIntOrNull() ?: return null else 0
+            if (digits !in 0..6) return null
+            val factor = 10.0.pow(digits)
+            return (round(number * factor) / factor).format()
+        }
+
         val function = Regex("(?i)^(SUM|AVERAGE|MIN|MAX|COUNT)\\(([^()]*)\\)$").matchEntire(expr)
         if (function != null) {
             val args = function.groupValues[2].split(',').map { it.trim() }.filter { it.isNotEmpty() }
@@ -70,7 +93,6 @@ object EditorUtils {
             }
         }
 
-        // Small IF subset: =IF(condition, trueValue, falseValue), where condition is numeric comparison.
         val ifMatch = Regex("(?i)^IF\\(([^,]+),([^,]+),(.+)\\)$").matchEntire(expr)
         if (ifMatch != null) {
             val condition = ifMatch.groupValues[1].trim()

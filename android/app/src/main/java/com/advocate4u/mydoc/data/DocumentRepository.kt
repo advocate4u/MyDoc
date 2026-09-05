@@ -9,16 +9,24 @@ import java.io.File
 
 class DocumentRepository(private val resolver: ContentResolver) {
     suspend fun read(uri: Uri, extension: String, cacheKey: String? = null): Result<String> = withContext(AppDispatchers.io) {
-        runCatching { resolver.openInputStream(uri)?.use { DocumentEngine.readText(it, extension, cacheKey) } ?: error("Unable to open document") }
+        runCatching<String> {
+            resolver.openInputStream(uri)?.use { input -> DocumentEngine.readText(input, extension, cacheKey) }
+                ?: error("Unable to open document")
+        }
     }
 
-    suspend fun exportDocx(text: String, output: File, bold: Boolean = false, italic: Boolean = false, underline: Boolean = false): Result<Unit> = writeBytes(output) { DocumentEngine.writeDocx(text, bold, italic, underline) }
-    suspend fun exportXlsx(cells: List<List<String>>, output: File): Result<Unit> = writeBytes(output) { DocumentEngine.writeXlsx(cells) }
-    suspend fun exportPptx(text: String, output: File): Result<Unit> = writeBytes(output) { DocumentEngine.writePptx(text) }
+    suspend fun exportDocx(text: String, output: File, bold: Boolean = false, italic: Boolean = false, underline: Boolean = false): Result<Unit> =
+        writeBytes(output) { DocumentEngine.writeDocx(text, bold, italic, underline) }
+
+    suspend fun exportXlsx(cells: List<List<String>>, output: File): Result<Unit> =
+        writeBytes(output) { DocumentEngine.writeXlsx(cells) }
+
+    suspend fun exportPptx(text: String, output: File): Result<Unit> =
+        writeBytes(output) { DocumentEngine.writePptx(text) }
 
     suspend fun exportToUri(uri: Uri, extension: String, text: String, cells: List<List<String>> = emptyList(), bold: Boolean = false, italic: Boolean = false, underline: Boolean = false): Result<Unit> =
         withContext(AppDispatchers.io) {
-            runCatching {
+            runCatching<Unit> {
                 val bytes = when (extension.lowercase()) {
                     "docx" -> DocumentEngine.writeDocx(text, bold, italic, underline)
                     "xlsx" -> DocumentEngine.writeXlsx(cells)
@@ -30,7 +38,7 @@ class DocumentRepository(private val resolver: ContentResolver) {
         }
 
     suspend fun exportPdfToUri(uri: Uri, text: String): Result<Unit> = withContext(AppDispatchers.io) {
-        runCatching {
+        runCatching<Unit> {
             val temp = File.createTempFile("mydoc-", ".pdf")
             try {
                 DocumentEngine.writePdf(text, temp)
@@ -39,10 +47,12 @@ class DocumentRepository(private val resolver: ContentResolver) {
         }
     }
 
-    suspend fun writePdf(text: String, output: File): Result<Unit> = withContext(AppDispatchers.io) { runCatching { DocumentEngine.writePdf(text, output) } }
+    suspend fun writePdf(text: String, output: File): Result<Unit> = withContext(AppDispatchers.io) {
+        runCatching<Unit> { DocumentEngine.writePdf(text, output) }
+    }
 
     private suspend fun writeBytes(output: File, producer: () -> ByteArray): Result<Unit> = withContext(AppDispatchers.io) {
-        runCatching {
+        runCatching<Unit> {
             output.parentFile?.mkdirs()
             val temp = File(output.parentFile, ".${output.name}.tmp")
             try {

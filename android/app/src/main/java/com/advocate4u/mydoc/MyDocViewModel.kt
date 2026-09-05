@@ -39,10 +39,7 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
     fun open(uri: Uri) {
         val context = getApplication<Application>()
         try {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         } catch (_: Throwable) { }
         viewModelScope.launch {
             _ui.value = _ui.value.copy(loading = true, status = "Opening…")
@@ -74,51 +71,31 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
 
     fun renameRecent(document: RecentDocument, newName: String): Boolean {
         val trimmed = newName.trim().take(255)
-        if (trimmed.isEmpty() || trimmed.contains('|')) {
-            _ui.value = _ui.value.copy(status = "Enter a valid file name")
-            return false
-        }
+        if (trimmed.isEmpty() || trimmed.contains('|')) { _ui.value = _ui.value.copy(status = "Enter a valid file name"); return false }
         val uri = Uri.parse(document.uri)
         val renamed = runCatching { DocumentsContract.renameDocument(getApplication<Application>().contentResolver, uri, trimmed) }.getOrNull()
-        if (renamed == null) {
-            _ui.value = _ui.value.copy(status = "Rename failed — the storage provider may not allow renaming")
-            return false
-        }
+        if (renamed == null) { _ui.value = _ui.value.copy(status = "Rename failed — the storage provider may not allow renaming"); return false }
         val newUri = renamed.toString()
         val updated = loadRecent().map { if (it.uri == document.uri) RecentDocument(trimmed, newUri) else it }
         persistRecent(updated)
         val current = _ui.value
-        _ui.value = current.copy(
-            name = if (current.sourceUri == document.uri) trimmed else current.name,
-            sourceUri = if (current.sourceUri == document.uri) newUri else current.sourceUri,
-            recent = updated,
-            status = "Renamed to $trimmed"
-        )
+        _ui.value = current.copy(name = if (current.sourceUri == document.uri) trimmed else current.name, sourceUri = if (current.sourceUri == document.uri) newUri else current.sourceUri, recent = updated, status = "Renamed to $trimmed")
         return true
     }
 
-    fun deleteRecent(document: RecentDocument): Boolean {
-        val uri = Uri.parse(document.uri)
-        val deleted = runCatching { DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, uri); true }.getOrDefault(false)
-        if (!deleted) {
-            _ui.value = _ui.value.copy(status = "Delete failed — the storage provider may not allow deletion")
-            return false
-        }
+    fun removeRecent(document: RecentDocument) {
         val updated = loadRecent().filterNot { it.uri == document.uri }
         persistRecent(updated)
-        val current = _ui.value
-        _ui.value = current.copy(
-            recent = updated,
-            status = if (current.sourceUri == document.uri) "Document deleted" else "Removed from recent documents"
-        )
-        return true
+        _ui.value = _ui.value.copy(recent = updated, status = "Removed from recent documents")
+    }
+
+    fun clearRecent() {
+        persistRecent(emptyList())
+        _ui.value = _ui.value.copy(recent = emptyList(), status = "Recent documents cleared")
     }
 
     fun setText(value: String) {
-        if (value.length <= 5_000_000) {
-            snapshot(); _ui.value = _ui.value.copy(text = value, dirty = true, status = "Modified")
-            scheduleAutosave()
-        }
+        if (value.length <= 5_000_000) { snapshot(); _ui.value = _ui.value.copy(text = value, dirty = true, status = "Modified"); scheduleAutosave() }
     }
 
     fun setCell(row: Int, col: Int, value: String) {
@@ -147,11 +124,7 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
         val q = _ui.value.searchQuery
         if (q.isEmpty()) return
         val (updated, count) = EditorUtils.replace(_ui.value.text, q, replacement.take(10_000), replaceAll)
-        if (count > 0) {
-            snapshot()
-            _ui.value = _ui.value.copy(text = updated, dirty = true, searchCount = if (replaceAll) 0 else count, status = "Replaced $count match${if (count == 1) "" else "es"}")
-            scheduleAutosave()
-        }
+        if (count > 0) { snapshot(); _ui.value = _ui.value.copy(text = updated, dirty = true, searchCount = if (replaceAll) 0 else count, status = "Replaced $count match${if (count == 1) "" else "es"}"); scheduleAutosave() }
     }
 
     fun evaluateCell(row: Int, col: Int) {
@@ -167,8 +140,7 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
         val state = _ui.value
         viewModelScope.launch {
             _ui.value = state.copy(loading = true, status = "Saving…")
-            val result = if (extension == "pdf") repository.exportPdfToUri(uri, state.text)
-            else repository.exportToUri(uri, extension, state.text, state.cells, state.bold, state.italic, state.underline)
+            val result = if (extension == "pdf") repository.exportPdfToUri(uri, state.text) else repository.exportToUri(uri, extension, state.text, state.cells, state.bold, state.italic, state.underline)
             result.fold(
                 { recovery.clear(); _ui.value = _ui.value.copy(loading = false, dirty = false, status = "Saved", sourceUri = uri.toString(), recoveryAvailable = false) },
                 { _ui.value = _ui.value.copy(loading = false, status = "Save failed: ${it.message ?: "unknown error"}") }
@@ -199,16 +171,12 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun persistRecent(items: List<RecentDocument>) {
-        prefs.edit().apply {
-            for (i in 0 until 10) remove("item_$i")
-            items.take(10).forEachIndexed { i, item -> putString("item_$i", "${item.name}|${item.uri}") }
-        }.apply()
+        prefs.edit().apply { for (i in 0 until 10) remove("item_$i"); items.take(10).forEachIndexed { i, item -> putString("item_$i", "${item.name}|${item.uri}") } }.apply()
     }
 
     private fun pushRecent(name: String, uri: String) {
         val updated = (listOf(RecentDocument(name, uri)) + loadRecent().filterNot { it.uri == uri }).take(10)
-        persistRecent(updated)
-        _ui.value = _ui.value.copy(recent = updated)
+        persistRecent(updated); _ui.value = _ui.value.copy(recent = updated)
     }
 }
 

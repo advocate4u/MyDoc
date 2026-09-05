@@ -41,6 +41,13 @@ android {
 
     buildFeatures { compose = true }
     buildTypes {
+        debug {
+            // Keep the installable debug build separate from the production package.
+            // This avoids Android rejecting a debug APK when a release-signed MyDoc
+            // installation already exists on the test device.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = false
             if (releaseSigningConfigured) {

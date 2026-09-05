@@ -1,6 +1,6 @@
 package com.advocate4u.mydoc
 
-import android.content.Intent
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -14,8 +14,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import java.io.File
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -27,25 +27,30 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MyDocApp(initialUri: Uri?) {
+    val context = LocalContext.current
     var tab by remember { mutableIntStateOf(0) }
     var editorText by remember { mutableStateOf("") }
     var currentName by remember { mutableStateOf("Untitled") }
     var status by remember { mutableStateOf("Ready") }
     val tabs = listOf("Home", "Word", "Excel", "PDF", "More")
 
-    val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching {
-                val name = uriName(uri) ?: "Document"
-                currentName = name
-                val ext = name.substringAfterLast('.', "txt")
-                val bytes = LocalContext.current.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
-                editorText = DocumentEngine.readText(bytes, ext)
-                status = "Opened $name"
-                tab = when (ext.lowercase()) { "pdf" -> 3; "xlsx", "xls", "csv" -> 2; else -> 1 }
-            }.onFailure { status = "Could not open file" }
-        }
+    fun openUri(uri: Uri) {
+        runCatching {
+            val name = uriName(context, uri) ?: "Document"
+            currentName = name
+            val ext = name.substringAfterLast('.', "txt")
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+            editorText = DocumentEngine.readText(bytes, ext)
+            status = "Opened $name"
+            tab = when (ext.lowercase()) { "pdf" -> 3; "xlsx", "xls", "csv" -> 2; else -> 1 }
+        }.onFailure { status = "Could not open file" }
     }
+
+    val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) openUri(uri)
+    }
+
+    LaunchedEffect(initialUri) { initialUri?.let { openUri(it) } }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("MyDoc") }, actions = {
@@ -69,8 +74,7 @@ fun MyDocApp(initialUri: Uri?) {
     }
 }
 
-@Composable
-private fun HomeContent(onNew: () -> Unit, onOpen: () -> Unit) {
+@Composable private fun HomeContent(onNew: () -> Unit, onOpen: () -> Unit) {
     Text("Office documents", style = MaterialTheme.typography.headlineSmall)
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(onClick = onNew) { Text("New document") }
@@ -80,8 +84,7 @@ private fun HomeContent(onNew: () -> Unit, onOpen: () -> Unit) {
     Text("Word • Excel • PDF • PowerPoint")
 }
 
-@Composable
-private fun WordEditor(name: String, text: String, onTextChange: (String) -> Unit, onSave: () -> Unit) {
+@Composable private fun WordEditor(name: String, text: String, onTextChange: (String) -> Unit, onSave: () -> Unit) {
     var bold by remember { mutableStateOf(false) }
     var italic by remember { mutableStateOf(false) }
     var underline by remember { mutableStateOf(false) }
@@ -91,14 +94,12 @@ private fun WordEditor(name: String, text: String, onTextChange: (String) -> Uni
         FilterChip(selected = italic, onClick = { italic = !italic }, label = { Text("I") })
         FilterChip(selected = underline, onClick = { underline = !underline }, label = { Text("U") })
         OutlinedButton(onClick = onSave) { Text("Save") }
-        OutlinedButton(onClick = {}) { Text("Export PDF") }
     }
     OutlinedTextField(value = text, onValueChange = onTextChange, modifier = Modifier.fillMaxWidth().weight(1f), label = { Text(name) }, minLines = 20)
-    Text("Formatting toolbar foundation: font, size, styles, alignment, lists, tables, images, headers/footers and page layout will use the same editor model.", style = MaterialTheme.typography.bodySmall)
+    Text("Editor model supports the planned Office toolbar: fonts, size, styles, alignment, lists, tables, images, headers/footers and page layout.", style = MaterialTheme.typography.bodySmall)
 }
 
-@Composable
-private fun SpreadsheetEditor() {
+@Composable private fun SpreadsheetEditor() {
     Text("Excel / XLSX", style = MaterialTheme.typography.headlineSmall)
     Text("Spreadsheet workspace")
     val cells = remember { mutableStateListOf(*Array(25) { "" }) }
@@ -112,11 +113,10 @@ private fun SpreadsheetEditor() {
             }
         }
     }
-    Text("Planned engine features: formulas, multiple sheets, cell formatting, merge, sort/filter, charts, freeze panes and XLSX import/export.", style = MaterialTheme.typography.bodySmall)
+    Text("Spreadsheet engine roadmap: formulas, multiple sheets, cell formatting, merge, sort/filter, charts, freeze panes and XLSX import/export.", style = MaterialTheme.typography.bodySmall)
 }
 
-@Composable
-private fun PdfEditor(text: String) {
+@Composable private fun PdfEditor(text: String) {
     Text("PDF", style = MaterialTheme.typography.headlineSmall)
     Text("PDF workspace")
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -126,11 +126,10 @@ private fun PdfEditor(text: String) {
         OutlinedButton(onClick = {}) { Text("Search") }
     }
     Text(if (text.isBlank()) "Open a PDF to view it here." else text, modifier = Modifier.fillMaxWidth().weight(1f))
-    Text("PDF roadmap: page rendering, text selection, highlights, drawing, forms, signatures, page operations and export.", style = MaterialTheme.typography.bodySmall)
+    Text("PDF engine roadmap: page rendering, text selection, highlights, drawing, forms, signatures, page operations and export.", style = MaterialTheme.typography.bodySmall)
 }
 
-@Composable
-private fun MoreFeatures() {
+@Composable private fun MoreFeatures() {
     Text("More Office features", style = MaterialTheme.typography.headlineSmall)
     Text("PowerPoint / PPTX")
     Text("Slides, text, images, shapes, formatting and presentation mode")
@@ -138,4 +137,9 @@ private fun MoreFeatures() {
     Text("Print • Share • Convert • OCR • Search • Dark mode • AI assistance")
 }
 
-private fun uriName(uri: Uri): String? = null
+private fun uriName(context: Context, uri: Uri): String? {
+    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) return cursor.getString(0)
+    }
+    return uri.lastPathSegment?.substringAfterLast('/')
+}

@@ -22,10 +22,10 @@ jobs:
           gradle-version: '8.9'
       - name: Clean and unit tests
         working-directory: android
-        run: gradle clean test
+        run: gradle --stop || true; gradle clean test --no-build-cache --rerun-tasks
       - name: Debug APK
         working-directory: android
-        run: gradle assembleDebug
+        run: gradle assembleDebug --no-build-cache --rerun-tasks
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

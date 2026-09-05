@@ -31,6 +31,7 @@ class DocumentRepository(private val resolver: ContentResolver) {
                     "docx" -> DocumentEngine.writeDocx(text, bold, italic, underline)
                     "xlsx" -> DocumentEngine.writeXlsx(cells)
                     "pptx" -> DocumentEngine.writePptx(text)
+                    "pdf" -> error("Use exportPdfToUri for PDF")
                     else -> text.toByteArray(Charsets.UTF_8)
                 }
                 resolver.openOutputStream(uri, "w")?.use { it.write(bytes) } ?: error("Unable to save document")

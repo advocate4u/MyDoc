@@ -23,6 +23,16 @@ android {
     packaging { resources.excludes += setOf("META-INF/NOTICE*", "META-INF/LICENSE*") }
 }
 
+// The canonical icon is kept at the repository root as MyDoc.png. Copy it into
+// Android resources during every build so the APK always uses that exact asset.
+val copyMyDocIcon = tasks.register<Copy>("copyMyDocIcon") {
+    val source = rootProject.projectDir.parentFile.resolve("MyDoc.png")
+    from(source)
+    into(layout.projectDirectory.dir("src/main/res/drawable-nodpi"))
+    rename { "mydoc_icon.png" }
+}
+tasks.named("preBuild") { dependsOn(copyMyDocIcon) }
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.activity:activity-compose:1.10.0")

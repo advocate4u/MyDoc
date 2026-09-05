@@ -156,7 +156,7 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
             val snapshot = _ui.value
             val source = snapshot.sourceUri
             val extension = snapshot.name.substringAfterLast('.', "").lowercase()
-            if (source != null && extension in setOf("docx", "xlsx", "xls", "xlsm", "pptx", "ppt", "txt", "csv")) {
+            if (source != null && extension in setOf("docx", "xlsx", "pptx", "txt", "csv")) {
                 val result = withContext(AppDispatchers.io) {
                     repository.exportToUri(Uri.parse(source), extension, snapshot.text, snapshot.cells, snapshot.bold, snapshot.italic, snapshot.underline)
                 }

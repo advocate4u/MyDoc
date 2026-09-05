@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
@@ -116,15 +117,15 @@ fun MyDocApp(vm: MyDocViewModel, initialUri: Uri?) {
 }
 
 @Composable private fun PdfViewer(uri: Uri) {
+    val context = LocalContext.current
     var page by remember(uri) { mutableIntStateOf(0) }
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
     var error by remember(uri) { mutableStateOf<String?>(null) }
     var renderer by remember(uri) { mutableStateOf<PdfRenderer?>(null) }
     var descriptor by remember(uri) { mutableStateOf<ParcelFileDescriptor?>(null) }
 
-    DisposableEffect(uri) {
+    DisposableEffect(uri, context) {
         try {
-            val context = androidx.compose.ui.platform.LocalContext.current
             val fd = context.contentResolver.openFileDescriptor(uri, "r") ?: error("Unable to open PDF")
             descriptor = fd
             renderer = PdfRenderer(fd)

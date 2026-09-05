@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class EditorUtilsTest {
-    private val cells = listOf(listOf("2", "3"), listOf("4", "5"))
+    private val cells = listOf(listOf("2", "3", "yes"), listOf("4", "5", "no"))
 
     @Test fun replaceAllReturnsCount() {
         val result = EditorUtils.replace("one one one", "one", "two", true)
@@ -29,6 +29,12 @@ class EditorUtilsTest {
         assertEquals("2", EditorUtils.evaluateSimpleFormula("=MIN(A1:B2)", cells))
         assertEquals("5", EditorUtils.evaluateSimpleFormula("=MAX(A1:B2)", cells))
         assertEquals("4", EditorUtils.evaluateSimpleFormula("=COUNT(A1:B2)", cells))
+    }
+
+    @Test fun evaluatesCountIf() {
+        assertEquals("2", EditorUtils.evaluateSimpleFormula("=COUNTIF(A1:B2,>3)", cells))
+        assertEquals("1", EditorUtils.evaluateSimpleFormula("=COUNTIF(C1:C2,yes)", cells))
+        assertEquals("1", EditorUtils.evaluateSimpleFormula("=COUNTIF(A1:B2,=3)", cells))
     }
 
     @Test fun evaluatesIfComparison() {

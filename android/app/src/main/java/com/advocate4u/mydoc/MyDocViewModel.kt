@@ -137,16 +137,32 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
     fun undo() { val previous = undo.removeLastOrNull() ?: return; redo.addLast(snapshotOf(_ui.value)); _ui.value = previous.toState(_ui.value).copy(status = "Undo", dirty = true); scheduleAutosave() }
     fun redo() { val next = redo.removeLastOrNull() ?: return; undo.addLast(snapshotOf(_ui.value)); _ui.value = next.toState(_ui.value).copy(status = "Redo", dirty = true); scheduleAutosave() }
 
+    fun saveCurrent(): Boolean {
+        val state = _ui.value
+        val source = state.sourceUri ?: return false.also { _ui.value = state.copy(status = "Use Save As for a new document") }
+        val extension = state.name.substringAfterLast('.', "").lowercase()
+        if (extension !in WRITABLE_EXTENSIONS) {
+            _ui.value = state.copy(status = "Use Save As — this format cannot be overwritten safely")
+            return false
+        }
+        autosaveJob?.cancel()
+        viewModelScope.launch { saveToUri(Uri.parse(source), extension, state) }
+        return true
+    }
+
     fun save(uri: Uri, extension: String) {
         val state = _ui.value
-        viewModelScope.launch {
-            _ui.value = state.copy(loading = true, status = "Saving…")
-            val result = if (extension == "pdf") repository.exportPdfToUri(uri, state.text) else repository.exportToUri(uri, extension, state.text, state.cells, state.bold, state.italic, state.underline)
-            result.fold(
-                { recovery.clear(); _ui.value = _ui.value.copy(loading = false, dirty = false, status = "Saved", sourceUri = uri.toString(), recoveryAvailable = false) },
-                { _ui.value = _ui.value.copy(loading = false, status = "Save failed: ${it.message ?: "unknown error"}") }
-            )
-        }
+        autosaveJob?.cancel()
+        viewModelScope.launch { saveToUri(uri, extension, state) }
+    }
+
+    private suspend fun saveToUri(uri: Uri, extension: String, state: MyDocUiState) {
+        _ui.value = state.copy(loading = true, status = "Saving…")
+        val result = if (extension == "pdf") repository.exportPdfToUri(uri, state.text) else repository.exportToUri(uri, extension, state.text, state.cells, state.bold, state.italic, state.underline)
+        result.fold(
+            { recovery.clear(); _ui.value = _ui.value.copy(loading = false, dirty = false, status = "Saved", sourceUri = uri.toString(), recoveryAvailable = false); pushRecent(_ui.value.name, uri.toString()) },
+            { _ui.value = _ui.value.copy(loading = false, status = "Save failed: ${it.message ?: "unknown error"}") }
+        )
     }
 
     private fun scheduleAutosave() {
@@ -157,7 +173,7 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
             val snapshot = _ui.value
             val source = snapshot.sourceUri
             val extension = snapshot.name.substringAfterLast('.', "").lowercase()
-            if (source != null && extension in setOf("docx", "xlsx", "pptx", "txt", "csv")) {
+            if (source != null && extension in WRITABLE_EXTENSIONS) {
                 val result = withContext(AppDispatchers.io) {
                     repository.exportToUri(Uri.parse(source), extension, snapshot.text, snapshot.cells, snapshot.bold, snapshot.italic, snapshot.underline)
                 }
@@ -204,6 +220,8 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
         val updated = RecentDocumentStore.push(loadRecent(), name, uri)
         persistRecent(updated); _ui.value = _ui.value.copy(recent = updated)
     }
+
+    companion object { private val WRITABLE_EXTENSIONS = setOf("docx", "xlsx", "pptx", "txt", "csv") }
 }
 
 data class RecentDocument(val name: String, val uri: String)

@@ -64,13 +64,25 @@ fun MyDocApp(vm: MyDocViewModel, initialUri: Uri?) {
     if (state.recoveryAvailable) AlertDialog(onDismissRequest = vm::dismissRecovery, title = { Text("Recover unsaved work?") }, text = { Text("MyDoc found an unsaved recovery copy${state.recoveryName?.let { " for $it" } ?: ""}.") }, confirmButton = { Button(onClick = vm::restoreRecovery) { Text("Recover") } }, dismissButton = { TextButton(onClick = vm::dismissRecovery) { Text("Discard") } })
     if (showFind) AlertDialog(onDismissRequest = { showFind = false }, title = { Text("Find / Replace") }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(searchText, { searchText = it; vm.find(it) }, label = { Text("Find") }, singleLine = true); OutlinedTextField(replacementText, { replacementText = it }, label = { Text("Replace with") }, singleLine = true); Text(if (searchText.isEmpty()) "" else "${state.searchCount} match${if (state.searchCount == 1) "" else "es"}") } }, confirmButton = { Button(onClick = { vm.replace(replacementText, false) }) { Text("Replace") } }, dismissButton = { Row { TextButton(onClick = { vm.replace(replacementText, true) }) { Text("Replace all") }; TextButton(onClick = { showFind = false }) { Text("Close") } } })
 
+    fun launchSaveAs() {
+        val extension = when (state.tab) { 2 -> "xlsx"; 3 -> "pdf"; 4 -> "pptx"; else -> "docx" }
+        val name = "${state.name.substringBeforeLast('.', "Untitled")}.${extension}"
+        when (extension) {
+            "xlsx" -> xlsxSave.launch(name)
+            "pdf" -> pdfSave.launch(name)
+            "pptx" -> pptxSave.launch(name)
+            else -> docxSave.launch(name)
+        }
+    }
+
     Scaffold(
         topBar = { TopAppBar(title = { Text("MyDoc${if (state.dirty) " •" else ""}") }, actions = {
             if (state.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             TextButton(onClick = { openLauncher.launch(arrayOf("*/*")) }) { Text("Open") }
             TextButton(onClick = { showFind = true }) { Text("Find") }
             state.sourceUri?.let { source -> TextButton(onClick = { val mime = FileFormat.mimeForExtension(state.name.substringAfterLast('.', "txt")); context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = mime; putExtra(Intent.EXTRA_STREAM, Uri.parse(source)); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "Share document")) }) { Text("Share") } }
-            TextButton(onClick = { val extension = when (state.tab) { 2 -> "xlsx"; 3 -> "pdf"; 4 -> "pptx"; else -> "docx" }; val name = "${state.name.substringBeforeLast('.', "Untitled")}.${extension}"; when (extension) { "xlsx" -> xlsxSave.launch(name); "pdf" -> pdfSave.launch(name); "pptx" -> pptxSave.launch(name); else -> docxSave.launch(name) } }) { Text("Save") }
+            TextButton(enabled = !state.loading, onClick = { vm.saveCurrent() }) { Text("Save") }
+            TextButton(enabled = !state.loading, onClick = { launchSaveAs() }) { Text("Save As") }
         }) },
         bottomBar = { NavigationBar { tabs.forEachIndexed { i, label -> NavigationBarItem(selected = state.tab == i, onClick = { vm.setTab(i) }, icon = { Text(label.take(1)) }, label = { Text(label) }) } } }
     ) { padding -> Column(Modifier.padding(padding).padding(12.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(state.status, style = MaterialTheme.typography.bodySmall); when (state.tab) { 0 -> HomeContent(state.recent, vm::newDocument, { openLauncher.launch(arrayOf("*/*")) }, vm); 1 -> WordEditor(state, vm); 2 -> SpreadsheetEditor(state, vm); 3 -> PdfEditor(state.sourceUri?.let(Uri::parse)); else -> MoreFeatures(vm) } } }

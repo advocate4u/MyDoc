@@ -3,6 +3,7 @@ package com.advocate4u.mydoc
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -37,7 +38,12 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
 
     fun open(uri: Uri) {
         val context = getApplication<Application>()
-        try { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Throwable) { }
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        } catch (_: Throwable) { }
         viewModelScope.launch {
             _ui.value = _ui.value.copy(loading = true, status = "Opening…")
             val name = runCatching {
@@ -65,6 +71,48 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissRecovery() { recovery.clear(); _ui.value = _ui.value.copy(recoveryAvailable = false, status = "Ready") }
     fun newDocument() { undo.clear(); redo.clear(); autosaveJob?.cancel(); recovery.clear(); _ui.value = MyDocUiState(tab = 1, name = "Untitled.docx", status = "New document", recent = loadRecent()) }
+
+    fun renameRecent(document: RecentDocument, newName: String): Boolean {
+        val trimmed = newName.trim().take(255)
+        if (trimmed.isEmpty() || trimmed.contains('|')) {
+            _ui.value = _ui.value.copy(status = "Enter a valid file name")
+            return false
+        }
+        val uri = Uri.parse(document.uri)
+        val renamed = runCatching { DocumentsContract.renameDocument(getApplication<Application>().contentResolver, uri, trimmed) }.getOrNull()
+        if (renamed == null) {
+            _ui.value = _ui.value.copy(status = "Rename failed — the storage provider may not allow renaming")
+            return false
+        }
+        val newUri = renamed.toString()
+        val updated = loadRecent().map { if (it.uri == document.uri) RecentDocument(trimmed, newUri) else it }
+        persistRecent(updated)
+        val current = _ui.value
+        _ui.value = current.copy(
+            name = if (current.sourceUri == document.uri) trimmed else current.name,
+            sourceUri = if (current.sourceUri == document.uri) newUri else current.sourceUri,
+            recent = updated,
+            status = "Renamed to $trimmed"
+        )
+        return true
+    }
+
+    fun deleteRecent(document: RecentDocument): Boolean {
+        val uri = Uri.parse(document.uri)
+        val deleted = runCatching { DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, uri); true }.getOrDefault(false)
+        if (!deleted) {
+            _ui.value = _ui.value.copy(status = "Delete failed — the storage provider may not allow deletion")
+            return false
+        }
+        val updated = loadRecent().filterNot { it.uri == document.uri }
+        persistRecent(updated)
+        val current = _ui.value
+        _ui.value = current.copy(
+            recent = updated,
+            status = if (current.sourceUri == document.uri) "Document deleted" else "Removed from recent documents"
+        )
+        return true
+    }
 
     fun setText(value: String) {
         if (value.length <= 5_000_000) {
@@ -142,7 +190,6 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
     private fun parseGrid(text: String): List<List<String>> = text.lines().take(100).map { it.split('\t', ',').take(26).let { row -> row + List(maxOf(0, 8 - row.size)) { "" } } }
     private fun String.toTab() = when (this) { "pdf" -> 3; "xlsx", "xls", "xlsm", "csv" -> 2; "ppt", "pptx" -> 4; else -> 1 }
 
-    /** SharedPreferences StringSet is unordered; indexed keys preserve actual MRU order. */
     private fun loadRecent(): List<RecentDocument> = buildList {
         for (i in 0 until 10) {
             val raw = prefs.getString("item_$i", null) ?: continue
@@ -151,12 +198,16 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun pushRecent(name: String, uri: String) {
-        val updated = (listOf(RecentDocument(name, uri)) + loadRecent().filterNot { it.uri == uri }).take(10)
+    private fun persistRecent(items: List<RecentDocument>) {
         prefs.edit().apply {
             for (i in 0 until 10) remove("item_$i")
-            updated.forEachIndexed { i, item -> putString("item_$i", "${item.name}|${item.uri}") }
+            items.take(10).forEachIndexed { i, item -> putString("item_$i", "${item.name}|${item.uri}") }
         }.apply()
+    }
+
+    private fun pushRecent(name: String, uri: String) {
+        val updated = (listOf(RecentDocument(name, uri)) + loadRecent().filterNot { it.uri == uri }).take(10)
+        persistRecent(updated)
         _ui.value = _ui.value.copy(recent = updated)
     }
 }

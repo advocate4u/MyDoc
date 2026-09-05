@@ -38,13 +38,6 @@ object RecentDocumentStore {
             RecentSortMode.NAME_ASC -> items.sortedBy { it.name.lowercase() }
             RecentSortMode.NAME_DESC -> items.sortedByDescending { it.name.lowercase() }
         }.let(::normalize)
-
-    fun toggleFavorite(items: List<RecentDocument>, uri: String): List<RecentDocument> =
-        items.map { if (it.uri == uri) it.copy(favorite = !it.favorite) else it }
-
-    fun favoritesFirst(items: List<RecentDocument>): List<RecentDocument> =
-        items.sortedWith(compareByDescending<RecentDocument> { it.favorite })
-            .let(::normalize)
 }
 
 enum class RecentSortMode { RECENT, NAME_ASC, NAME_DESC }

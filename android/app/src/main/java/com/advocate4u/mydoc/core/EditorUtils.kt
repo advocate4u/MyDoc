@@ -39,7 +39,7 @@ object EditorUtils {
                 val target = comparator.groupValues[2].toDoubleOrNull() ?: return null
                 val op = comparator.groupValues[1]
                 return range.count { raw ->
-                    val number = raw.toDoubleOrNull() ?: return false
+                    val number = raw.toDoubleOrNull() ?: return@count false
                     when (op) {
                         ">" -> number > target
                         "<" -> number < target

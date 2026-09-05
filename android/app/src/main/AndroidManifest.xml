@@ -1,8 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:theme="@style/Theme.MyDoc" android:label="MyDoc" android:allowBackup="true" android:supportsRtl="true">
+    <application
+        android:theme="@style/Theme.MyDoc"
+        android:label="MyDoc"
+        android:icon="@drawable/mydoc_icon"
+        android:allowBackup="true"
+        android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
             <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:mimeType="application/pdf"/></intent-filter>
             <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document"/></intent-filter>

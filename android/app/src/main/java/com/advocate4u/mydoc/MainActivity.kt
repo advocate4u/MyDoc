@@ -95,9 +95,9 @@ fun MyDocApp(vm: MyDocViewModel, initialUri: Uri?) {
                 TextButton(onClick = { showFind = true }) { Text("Find") }
                 state.sourceUri?.let { source ->
                     TextButton(onClick = {
-                        val type = FileFormat.mimeForExtension(state.name.substringAfterLast('.', "txt"))
+                        val mime = FileFormat.mimeForExtension(state.name.substringAfterLast('.', "txt"))
                         context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                            type = type
+                            type = mime
                             putExtra(Intent.EXTRA_STREAM, Uri.parse(source))
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }, "Share document"))
@@ -200,7 +200,10 @@ private fun PdfViewer(uri: Uri) {
     var session by remember(uri) { mutableStateOf(PdfSession(null, null, null)) }
     DisposableEffect(uri, context) {
         val result = openPdf(context, uri); session = result; page = 0
-        onDispose { result.renderer?.close(); result.descriptor?.close() }
+        onDispose {
+            result.renderer?.let { synchronized(it) { it.close() } }
+            result.descriptor?.close()
+        }
     }
     val renderer = session.renderer
     var bitmap by remember(uri) { mutableStateOf<Bitmap?>(null) }
@@ -231,14 +234,16 @@ private fun openPdf(context: Context, uri: Uri): PdfSession = try {
 } catch (t: Throwable) { PdfSession(null, null, t.message ?: "Unable to open PDF") }
 
 private fun renderPdfPage(renderer: PdfRenderer, pageIndex: Int, zoom: Float): Bitmap? = try {
-    if (pageIndex !in 0 until renderer.pageCount) return null
-    renderer.openPage(pageIndex).use { page ->
-        val scale = min(zoom, 3f)
-        val width = max(1, (page.width * scale).toInt())
-        val height = max(1, (page.height * scale).toInt())
-        Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
-            it.eraseColor(Color.WHITE)
-            page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+    synchronized(renderer) {
+        if (pageIndex !in 0 until renderer.pageCount) return null
+        renderer.openPage(pageIndex).use { page ->
+            val scale = min(zoom, 3f)
+            val width = max(1, (page.width * scale).toInt())
+            val height = max(1, (page.height * scale).toInt())
+            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+                it.eraseColor(Color.WHITE)
+                page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            }
         }
     }
 } catch (_: Throwable) { null }

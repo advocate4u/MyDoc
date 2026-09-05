@@ -1,0 +1,31 @@
+name: Android CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Make Gradle executable
+        run: chmod +x android/gradlew
+      - name: Unit tests
+        working-directory: android
+        run: ./gradlew test
+      - name: Debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyDoc-debug
+          path: android/app/build/outputs/apk/debug/*.apk

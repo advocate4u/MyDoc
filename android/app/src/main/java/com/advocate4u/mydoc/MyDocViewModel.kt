@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.advocate4u.mydoc.core.AppDispatchers
 import com.advocate4u.mydoc.core.EditorUtils
+import com.advocate4u.mydoc.core.RecentDocumentStore
 import com.advocate4u.mydoc.core.RecoveryManager
 import com.advocate4u.mydoc.data.DocumentRepository
 import kotlinx.coroutines.Job
@@ -76,7 +77,7 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
         val renamed = runCatching { DocumentsContract.renameDocument(getApplication<Application>().contentResolver, uri, trimmed) }.getOrNull()
         if (renamed == null) { _ui.value = _ui.value.copy(status = "Rename failed — the storage provider may not allow renaming"); return false }
         val newUri = renamed.toString()
-        val updated = loadRecent().map { if (it.uri == document.uri) RecentDocument(trimmed, newUri) else it }
+        val updated = RecentDocumentStore.normalize(loadRecent().map { if (it.uri == document.uri) RecentDocument(trimmed, newUri) else it })
         persistRecent(updated)
         val current = _ui.value
         _ui.value = current.copy(name = if (current.sourceUri == document.uri) trimmed else current.name, sourceUri = if (current.sourceUri == document.uri) newUri else current.sourceUri, recent = updated, status = "Renamed to $trimmed")
@@ -181,20 +182,26 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
     private fun parseGrid(text: String): List<List<String>> = text.lines().take(100).map { it.split('\t', ',').take(26).let { row -> row + List(maxOf(0, 8 - row.size)) { "" } } }
     private fun String.toTab() = when (this) { "pdf" -> 3; "xlsx", "xls", "xlsm", "csv" -> 2; "ppt", "pptx" -> 4; else -> 1 }
 
-    private fun loadRecent(): List<RecentDocument> = buildList {
-        for (i in 0 until 10) {
-            val raw = prefs.getString("item_$i", null) ?: continue
-            val parts = raw.split('|', limit = 2)
-            if (parts.size == 2) add(RecentDocument(parts[0], parts[1]))
+    private fun loadRecent(): List<RecentDocument> {
+        val stored = buildList {
+            for (i in 0 until RecentDocumentStore.MAX_ITEMS) {
+                val raw = prefs.getString("item_$i", null) ?: continue
+                val parts = raw.split('|', limit = 2)
+                if (parts.size == 2) add(RecentDocument(parts[0], parts[1]))
+            }
         }
+        val cleaned = RecentDocumentStore.removeInaccessible(getApplication<Application>().contentResolver, stored)
+        if (cleaned.size != stored.size) persistRecent(cleaned)
+        return cleaned
     }
 
     private fun persistRecent(items: List<RecentDocument>) {
-        prefs.edit().apply { for (i in 0 until 10) remove("item_$i"); items.take(10).forEachIndexed { i, item -> putString("item_$i", "${item.name}|${item.uri}") } }.apply()
+        val normalized = RecentDocumentStore.normalize(items)
+        prefs.edit().apply { for (i in 0 until RecentDocumentStore.MAX_ITEMS) remove("item_$i"); normalized.forEachIndexed { i, item -> putString("item_$i", "${item.name}|${item.uri}") } }.apply()
     }
 
     private fun pushRecent(name: String, uri: String) {
-        val updated = (listOf(RecentDocument(name, uri)) + loadRecent().filterNot { it.uri == uri }).take(10)
+        val updated = RecentDocumentStore.push(loadRecent(), name, uri)
         persistRecent(updated); _ui.value = _ui.value.copy(recent = updated)
     }
 }

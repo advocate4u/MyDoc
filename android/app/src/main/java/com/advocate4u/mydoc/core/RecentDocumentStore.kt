@@ -1,0 +1,28 @@
+package com.advocate4u.mydoc.core
+
+import android.content.ContentResolver
+import android.net.Uri
+import com.advocate4u.mydoc.RecentDocument
+
+/** Pure recent-document helpers kept outside the UI state layer. */
+object RecentDocumentStore {
+    const val MAX_ITEMS = 10
+
+    fun normalize(items: List<RecentDocument>): List<RecentDocument> =
+        items.asSequence()
+            .filter { it.name.isNotBlank() && it.uri.isNotBlank() }
+            .distinctBy { it.uri }
+            .take(MAX_ITEMS)
+            .toList()
+
+    fun push(items: List<RecentDocument>, name: String, uri: String): List<RecentDocument> =
+        normalize(listOf(RecentDocument(name.trim(), uri)) + items.filterNot { it.uri == uri })
+
+    fun isAccessible(resolver: ContentResolver, item: RecentDocument): Boolean =
+        runCatching {
+            resolver.openAssetFileDescriptor(Uri.parse(item.uri), "r")?.use { true } ?: false
+        }.getOrDefault(false)
+
+    fun removeInaccessible(resolver: ContentResolver, items: List<RecentDocument>): List<RecentDocument> =
+        normalize(items.filter { isAccessible(resolver, it) })
+}

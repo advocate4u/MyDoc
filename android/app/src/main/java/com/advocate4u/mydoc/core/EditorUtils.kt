@@ -63,10 +63,10 @@ object EditorUtils {
             }
         }
 
-        val round = Regex("(?i)^ROUND\\(([^()]*)\\)$").matchEntire(expr)
-        if (round != null) {
-            val args = round.groupValues[1].split(',').map { it.trim() }.filter { it.isNotEmpty() }
-            if (args !in listOf(1, 2)) return null
+        val roundMatch = Regex("(?i)^ROUND\\(([^()]*)\\)$").matchEntire(expr)
+        if (roundMatch != null) {
+            val args = roundMatch.groupValues[1].split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            if (args.size !in 1..2) return null
             val number = operandValue(args[0], cells) ?: return null
             val digits = if (args.size == 2) args[1].toIntOrNull() ?: return null else 0
             if (digits !in 0..6) return null
@@ -86,8 +86,8 @@ object EditorUtils {
             return when (function.groupValues[1].uppercase()) {
                 "SUM" -> values.sum().format()
                 "AVERAGE" -> if (values.isEmpty()) "0" else (values.sum() / values.size).format()
-                "MIN" -> values.minOrNull()?.format()
-                "MAX" -> values.maxOrNull()?.format()
+                "MIN" -> values.minOrNull()?.format() ?: "0"
+                "MAX" -> values.maxOrNull()?.format() ?: "0"
                 "COUNT" -> values.count { it.isFinite() }.toString()
                 else -> null
             }

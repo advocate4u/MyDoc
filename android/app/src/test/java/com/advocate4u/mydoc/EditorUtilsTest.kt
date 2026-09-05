@@ -28,6 +28,12 @@ class EditorUtilsTest {
         assertEquals("3.5", EditorUtils.evaluateSimpleFormula("=AVERAGE(A1:B2)", cells))
         assertEquals("2", EditorUtils.evaluateSimpleFormula("=MIN(A1:B2)", cells))
         assertEquals("5", EditorUtils.evaluateSimpleFormula("=MAX(A1:B2)", cells))
+        assertEquals("4", EditorUtils.evaluateSimpleFormula("=COUNT(A1:B2)", cells))
+    }
+
+    @Test fun evaluatesIfComparison() {
+        assertEquals("yes", EditorUtils.evaluateSimpleFormula("=IF(A1<B1,yes,no)", cells))
+        assertEquals("ok", EditorUtils.evaluateSimpleFormula("=IF(5>=5,ok,bad)", emptyList()))
     }
 
     @Test fun nonFormulaReturnsNull() {

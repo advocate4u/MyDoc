@@ -2,7 +2,7 @@ package com.advocate4u.mydoc.core
 
 import kotlin.math.max
 
-/** Small, deterministic editor helpers shared by Word and spreadsheet features. */
+/** Spreadsheet-safe helpers shared by Word and spreadsheet features. */
 object EditorUtils {
     fun replace(text: String, query: String, replacement: String, replaceAll: Boolean): Pair<String, Int> {
         if (query.isEmpty()) return text to 0
@@ -21,12 +21,13 @@ object EditorUtils {
         return if (i < 0) text to 0 else text.substring(0, i) + replacement + text.substring(i + query.length) to 1
     }
 
-    /** Evaluates a safe spreadsheet subset: arithmetic, cell refs, ranges and SUM/AVERAGE/MIN/MAX. */
+    /** Evaluates a safe spreadsheet subset: arithmetic, cell refs, ranges and common functions. */
     fun evaluateSimpleFormula(value: String, cells: List<List<String>>): String? {
         if (!value.startsWith("=")) return null
         val expr = value.drop(1).trim()
         if (expr.isEmpty()) return null
-        val function = Regex("(?i)^(SUM|AVERAGE|MIN|MAX)\\(([^()]*)\\)$").matchEntire(expr)
+
+        val function = Regex("(?i)^(SUM|AVERAGE|MIN|MAX|COUNT)\\(([^()]*)\\)$").matchEntire(expr)
         if (function != null) {
             val args = function.groupValues[2].split(',').map { it.trim() }.filter { it.isNotEmpty() }
             if (args.isEmpty()) return "0"
@@ -40,11 +41,36 @@ object EditorUtils {
                 "AVERAGE" -> if (values.isEmpty()) "0" else (values.sum() / values.size).format()
                 "MIN" -> values.minOrNull()?.format()
                 "MAX" -> values.maxOrNull()?.format()
+                "COUNT" -> values.count { it.isFinite() }.toString()
                 else -> null
             }
         }
+
+        // Small IF subset: =IF(condition, trueValue, falseValue), where condition is numeric comparison.
+        val ifMatch = Regex("(?i)^IF\\(([^,]+),([^,]+),(.+)\\)$").matchEntire(expr)
+        if (ifMatch != null) {
+            val condition = ifMatch.groupValues[1].trim()
+            val yes = ifMatch.groupValues[2].trim().trim('"')
+            val no = ifMatch.groupValues[3].trim().trim('"')
+            val comparison = Regex("^(.+?)(>=|<=|<>|=|>|<)(.+)$").matchEntire(condition) ?: return null
+            val left = operandValue(comparison.groupValues[1].trim(), cells) ?: return null
+            val right = operandValue(comparison.groupValues[3].trim(), cells) ?: return null
+            val result = when (comparison.groupValues[2]) {
+                ">" -> left > right
+                "<" -> left < right
+                ">=" -> left >= right
+                "<=" -> left <= right
+                "=" -> left == right
+                "<>" -> left != right
+                else -> false
+            }
+            return if (result) yes else no
+        }
         return evaluateArithmetic(expr, cells)?.format()
     }
+
+    private fun operandValue(value: String, cells: List<List<String>>): Double? =
+        value.toDoubleOrNull() ?: expandReference(value, cells)?.singleOrNull()
 
     private fun evaluateArithmetic(expr: String, cells: List<List<String>>): Double? {
         val normalized = expr.replace(" ", "")

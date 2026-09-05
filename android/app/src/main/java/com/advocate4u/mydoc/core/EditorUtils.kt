@@ -27,6 +27,30 @@ object EditorUtils {
         val expr = value.drop(1).trim()
         if (expr.isEmpty()) return null
 
+        val countIf = Regex("(?i)^COUNTIF\\(([^,]+),(.+)\\)$").matchEntire(expr)
+        if (countIf != null) {
+            val range = expandRawReference(countIf.groupValues[1].trim(), cells) ?: return null
+            val criterion = countIf.groupValues[2].trim().trim('"')
+            val comparator = Regex("^(>=|<=|<>|=|>|<)(-?(?:\\d+(?:\\.\\d*)?|\\.\\d+))$").matchEntire(criterion)
+            if (comparator != null) {
+                val target = comparator.groupValues[2].toDoubleOrNull() ?: return null
+                val op = comparator.groupValues[1]
+                return range.count { raw ->
+                    val number = raw.toDoubleOrNull() ?: return false
+                    when (op) {
+                        ">" -> number > target
+                        "<" -> number < target
+                        ">=" -> number >= target
+                        "<=" -> number <= target
+                        "=" -> number == target
+                        "<>" -> number != target
+                        else -> false
+                    }
+                }.toString()
+            }
+            return range.count { it == criterion }.toString()
+        }
+
         val function = Regex("(?i)^(SUM|AVERAGE|MIN|MAX|COUNT)\\(([^()]*)\\)$").matchEntire(expr)
         if (function != null) {
             val args = function.groupValues[2].split(',').map { it.trim() }.filter { it.isNotEmpty() }
@@ -109,18 +133,21 @@ object EditorUtils {
         return result
     }
 
-    private fun expandReference(reference: String, cells: List<List<String>>): List<Double>? {
+    private fun expandReference(reference: String, cells: List<List<String>>): List<Double>? =
+        expandRawReference(reference, cells)?.map { it.toDoubleOrNull() ?: 0.0 }
+
+    private fun expandRawReference(reference: String, cells: List<List<String>>): List<String>? {
         val single = Regex("(?i)^([A-Z]+)(\\d+)$").matchEntire(reference)
         if (single != null) {
             val c = column(single.groupValues[1]); val r = single.groupValues[2].toIntOrNull()?.minus(1) ?: return null
             if (r < 0 || c < 0) return null
-            return listOf(cells.getOrNull(r)?.getOrNull(c)?.toDoubleOrNull() ?: 0.0)
+            return listOf(cells.getOrNull(r)?.getOrNull(c) ?: "")
         }
         val range = Regex("(?i)^([A-Z]+)(\\d+):([A-Z]+)(\\d+)$").matchEntire(reference) ?: return null
         val c1 = column(range.groupValues[1]); val r1 = range.groupValues[2].toIntOrNull()?.minus(1) ?: return null
         val c2 = column(range.groupValues[3]); val r2 = range.groupValues[4].toIntOrNull()?.minus(1) ?: return null
         if (minOf(r1, r2) < 0 || minOf(c1, c2) < 0) return null
-        return buildList { for (r in minOf(r1, r2)..maxOf(r1, r2)) for (c in minOf(c1, c2)..maxOf(c1, c2)) add(cells.getOrNull(r)?.getOrNull(c)?.toDoubleOrNull() ?: 0.0) }
+        return buildList { for (r in minOf(r1, r2)..maxOf(r1, r2)) for (c in minOf(c1, c2)..maxOf(c1, c2)) add(cells.getOrNull(r)?.getOrNull(c) ?: "") }
     }
 
     private fun column(value: String): Int = value.uppercase().fold(0) { acc, ch -> acc * 26 + ch.code - 'A'.code + 1 } - 1

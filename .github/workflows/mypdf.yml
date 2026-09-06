@@ -1,0 +1,34 @@
+name: MyPDF CI
+
+on:
+  push:
+    branches:
+      - 'feature/mypdf-**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'mypdf/**'
+      - '.github/workflows/mypdf.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build MyPDF Debug APK
+        working-directory: mypdf
+        run: gradle --stop || true; gradle clean assembleDebug --no-build-cache --rerun-tasks
+      - name: Upload MyPDF APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyPDF-debug
+          path: mypdf/app/build/outputs/apk/debug/*.apk

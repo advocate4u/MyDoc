@@ -146,14 +146,70 @@ fun MyPdfApp(initialUri: Uri?) {
 }
 
 @Composable private fun PdfCanvas(state: PdfState, editable: Boolean, onTap: (Offset) -> Unit) {
-    val bmp = state.bitmap; var scale by remember(state.page) { mutableFloatStateOf(1f) }; var offset by remember(state.page) { mutableStateOf(Offset.Zero) }; val noteColor = MaterialTheme.colorScheme.primary
+    val bmp = state.bitmap
+    var gestureScale by remember(state.page) { mutableFloatStateOf(1f) }
+    var offset by remember(state.page) { mutableStateOf(Offset.Zero) }
+    val noteColor = MaterialTheme.colorScheme.primary
+
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
-        if (bmp == null) Text("Open a PDF to begin", modifier = Modifier.align(Alignment.Center)) else Canvas(
-            Modifier.fillMaxSize().pointerInput(editable, bmp) { detectTransformGestures { _, pan, zoom, _ -> if (!editable) { scale = (scale * zoom).coerceIn(.5f, 4f); offset += pan } } }.pointerInput(editable, bmp) { if (editable) detectTapGestures(onTap = onTap) }
-        ) {
-            val image = bmp.asImageBitmap(); val w = image.width * state.zoom * scale; val h = image.height * state.zoom * scale; val left = (size.width - w) / 2f + offset.x; val top = (size.height - h) / 2f + offset.y
-            drawImage(image, dstOffset = androidx.compose.ui.unit.IntOffset(left.toInt(), top.toInt()), dstSize = androidx.compose.ui.unit.IntSize(w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1)))
-            state.notes.filter { it.page == state.page }.forEach { note -> drawCircle(noteColor, 10f, Offset(left + note.x * state.zoom * scale, top + note.y * state.zoom * scale)) }
+        if (bmp == null) {
+            Text("Open a PDF to begin", modifier = Modifier.align(Alignment.Center))
+        } else {
+            Canvas(
+                Modifier
+                    .fillMaxSize()
+                    // One- or two-finger pan, plus true two-finger pinch-to-zoom.
+                    // Pan follows the fingers in every direction and is clamped so the
+                    // page can be moved left/right/top/bottom without losing it.
+                    .pointerInput(state.page, state.zoom, bmp) {
+                        detectTransformGestures { centroid, pan, zoom, _ ->
+                            val oldScale = gestureScale
+                            val newScale = (oldScale * zoom).coerceIn(0.5f, 4f)
+                            val imageWidth = bmp.width * state.zoom * newScale
+                            val imageHeight = bmp.height * state.zoom * newScale
+                            val oldWidth = bmp.width * state.zoom * oldScale
+                            val oldHeight = bmp.height * state.zoom * oldScale
+
+                            // Keep the point under the fingers stable while pinching.
+                            val center = Offset(size.width / 2f, size.height / 2f)
+                            val oldLeft = (size.width - oldWidth) / 2f + offset.x
+                            val oldTop = (size.height - oldHeight) / 2f + offset.y
+                            val localX = (centroid.x - oldLeft) / oldScale
+                            val localY = (centroid.y - oldTop) / oldScale
+                            var newOffset = Offset(
+                                centroid.x - (size.width - imageWidth) / 2f - localX * newScale + pan.x,
+                                centroid.y - (size.height - imageHeight) / 2f - localY * newScale + pan.y
+                            )
+
+                            val maxX = if (imageWidth > size.width) (imageWidth - size.width) / 2f else 0f
+                            val maxY = if (imageHeight > size.height) (imageHeight - size.height) / 2f else 0f
+                            newOffset = Offset(
+                                newOffset.x.coerceIn(-maxX, maxX),
+                                newOffset.y.coerceIn(-maxY, maxY)
+                            )
+                            gestureScale = newScale
+                            offset = newOffset
+                        }
+                    }
+                    .pointerInput(editable, bmp) {
+                        if (editable) detectTapGestures(onTap = onTap)
+                    }
+            ) {
+                val image = bmp.asImageBitmap()
+                val totalScale = state.zoom * gestureScale
+                val w = image.width * totalScale
+                val h = image.height * totalScale
+                val left = (size.width - w) / 2f + offset.x
+                val top = (size.height - h) / 2f + offset.y
+                drawImage(
+                    image,
+                    dstOffset = androidx.compose.ui.unit.IntOffset(left.toInt(), top.toInt()),
+                    dstSize = androidx.compose.ui.unit.IntSize(w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1))
+                )
+                state.notes.filter { it.page == state.page }.forEach { note ->
+                    drawCircle(noteColor, 10f, Offset(left + note.x * totalScale, top + note.y * totalScale))
+                }
+            }
         }
     }
 }

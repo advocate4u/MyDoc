@@ -30,6 +30,14 @@ android {
     packaging { resources.excludes += setOf("META-INF/NOTICE*", "META-INF/LICENSE*") }
 }
 
+val copyMyDocIcon = tasks.register<Copy>("copyMyDocIcon") {
+    val source = rootProject.projectDir.parentFile.resolve("MyDoc.png")
+    from(source)
+    into(layout.projectDirectory.dir("app/src/main/res/drawable-nodpi"))
+    rename { "mypdf_icon.png" }
+}
+tasks.named("preBuild") { dependsOn(copyMyDocIcon) }
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.activity:activity-compose:1.10.0")

@@ -31,23 +31,14 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
     private val redo = ArrayDeque<EditorSnapshot>()
     private var autosaveJob: Job? = null
 
-    init {
-        recovery.read()?.let { snapshot ->
-            _ui.value = _ui.value.copy(recoveryAvailable = true, recoveryName = snapshot.name, status = "Recovery available")
-        }
-    }
+    init { recovery.read()?.let { snapshot -> _ui.value = _ui.value.copy(recoveryAvailable = true, recoveryName = snapshot.name, status = "Recovery available") } }
 
     fun open(uri: Uri) {
         val context = getApplication<Application>()
-        try {
-            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        } catch (_: Throwable) { }
+        try { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (_: Throwable) { }
         viewModelScope.launch {
             _ui.value = _ui.value.copy(loading = true, status = "Opening…")
-            val name = runCatching {
-                context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
-                    ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Document"
-            }.getOrDefault("Document")
+            val name = runCatching { context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Document" }.getOrDefault("Document")
             val ext = name.substringAfterLast('.', "txt").lowercase()
             repository.read(uri, ext, uri.toString()).fold(
                 onSuccess = { text ->
@@ -60,80 +51,54 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun restoreRecovery() {
-        val snapshot = recovery.read() ?: return
-        undo.clear(); redo.clear()
-        _ui.value = _ui.value.copy(name = snapshot.name, text = snapshot.text, tab = snapshot.extension.toTab(), dirty = true, status = "Recovered ${snapshot.name}", recoveryAvailable = false, sourceUri = null)
-        recovery.clear()
-    }
-
+    fun restoreRecovery() { val snapshot = recovery.read() ?: return; undo.clear(); redo.clear(); _ui.value = _ui.value.copy(name = snapshot.name, text = snapshot.text, tab = snapshot.extension.toTab(), dirty = true, status = "Recovered ${snapshot.name}", recoveryAvailable = false, sourceUri = null); recovery.clear() }
     fun dismissRecovery() { recovery.clear(); _ui.value = _ui.value.copy(recoveryAvailable = false, status = "Ready") }
     fun newDocument() { undo.clear(); redo.clear(); autosaveJob?.cancel(); recovery.clear(); _ui.value = MyDocUiState(tab = 1, name = "Untitled.docx", status = "New document", recent = loadRecent()) }
 
     fun renameRecent(document: RecentDocument, newName: String): Boolean {
         val trimmed = newName.trim().take(255)
         if (trimmed.isEmpty() || trimmed.contains('|')) { _ui.value = _ui.value.copy(status = "Enter a valid file name"); return false }
-        val uri = Uri.parse(document.uri)
-        val renamed = runCatching { DocumentsContract.renameDocument(getApplication<Application>().contentResolver, uri, trimmed) }.getOrNull()
+        val renamed = runCatching { DocumentsContract.renameDocument(getApplication<Application>().contentResolver, Uri.parse(document.uri), trimmed) }.getOrNull()
         if (renamed == null) { _ui.value = _ui.value.copy(status = "Rename failed — the storage provider may not allow renaming"); return false }
         val newUri = renamed.toString()
-        val updated = RecentDocumentStore.normalize(loadRecent().map { if (it.uri == document.uri) RecentDocument(trimmed, newUri) else it })
+        val updated = RecentDocumentStore.normalize(loadRecent().map { if (it.uri == document.uri) document.copy(name = trimmed, uri = newUri) else it })
         persistRecent(updated)
         val current = _ui.value
         _ui.value = current.copy(name = if (current.sourceUri == document.uri) trimmed else current.name, sourceUri = if (current.sourceUri == document.uri) newUri else current.sourceUri, recent = updated, status = "Renamed to $trimmed")
         return true
     }
 
-    fun removeRecent(document: RecentDocument) {
-        val updated = loadRecent().filterNot { it.uri == document.uri }
+    fun removeRecent(document: RecentDocument) { val updated = loadRecent().filterNot { it.uri == document.uri }; persistRecent(updated); _ui.value = _ui.value.copy(recent = updated, status = "Removed from recent documents") }
+
+    fun deleteDocument(document: RecentDocument): Boolean {
+        val deleted = runCatching { DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, Uri.parse(document.uri)) }.getOrDefault(false)
+        if (!deleted) { _ui.value = _ui.value.copy(status = "Delete failed — storage provider may not allow deletion"); return false }
+        removeRecent(document)
+        if (_ui.value.sourceUri == document.uri) { autosaveJob?.cancel(); _ui.value = _ui.value.copy(sourceUri = null, dirty = false, name = "Untitled", text = "", status = "Document deleted") } else _ui.value = _ui.value.copy(status = "Document deleted")
+        return true
+    }
+
+    fun toggleFavorite(document: RecentDocument) {
+        val updated = loadRecent().map { if (it.uri == document.uri) it.copy(favorite = !it.favorite) else it }
         persistRecent(updated)
-        _ui.value = _ui.value.copy(recent = updated, status = "Removed from recent documents")
+        _ui.value = _ui.value.copy(recent = updated, status = if (updated.firstOrNull { it.uri == document.uri }?.favorite == true) "Added to favorites" else "Removed from favorites")
     }
 
-    fun clearRecent() {
-        persistRecent(emptyList())
-        _ui.value = _ui.value.copy(recent = emptyList(), status = "Recent documents cleared")
+    fun sortRecent(mode: RecentSortMode) {
+        val sorted = when (mode) { RecentSortMode.RECENT -> loadRecent(); RecentSortMode.NAME_ASC -> loadRecent().sortedBy { it.name.lowercase() }; RecentSortMode.NAME_DESC -> loadRecent().sortedByDescending { it.name.lowercase() } }
+        _ui.value = _ui.value.copy(recent = sorted, status = "Recent documents sorted")
     }
 
-    fun setText(value: String) {
-        if (value.length <= 5_000_000) { snapshot(); _ui.value = _ui.value.copy(text = value, dirty = true, status = "Modified"); scheduleAutosave() }
-    }
-
-    fun setCell(row: Int, col: Int, value: String) {
-        if (row !in 0 until 100 || col !in 0 until 26) return
-        snapshot()
-        val mutable = _ui.value.cells.map { it.toMutableList() }.toMutableList()
-        while (mutable.size <= row) mutable.add(MutableList(26) { "" })
-        while (mutable[row].size <= col) mutable[row].add("")
-        mutable[row][col] = value.take(10_000)
-        _ui.value = _ui.value.copy(cells = mutable.map { it.toList() }, dirty = true, status = "Modified", calculationResult = null)
-        scheduleAutosave()
-    }
-
+    fun clearRecent() { persistRecent(emptyList()); _ui.value = _ui.value.copy(recent = emptyList(), status = "Recent documents cleared") }
+    fun setText(value: String) { if (value.length <= 5_000_000) { snapshot(); _ui.value = _ui.value.copy(text = value, dirty = true, status = "Modified"); scheduleAutosave() } }
+    fun setCell(row: Int, col: Int, value: String) { if (row !in 0 until 100 || col !in 0 until 26) return; snapshot(); val mutable = _ui.value.cells.map { it.toMutableList() }.toMutableList(); while (mutable.size <= row) mutable.add(MutableList(26) { "" }); while (mutable[row].size <= col) mutable[row].add(""); mutable[row][col] = value.take(10_000); _ui.value = _ui.value.copy(cells = mutable.map { it.toList() }, dirty = true, status = "Modified", calculationResult = null); scheduleAutosave() }
     fun toggleBold() { _ui.value = _ui.value.copy(bold = !_ui.value.bold, dirty = true); scheduleAutosave() }
     fun toggleItalic() { _ui.value = _ui.value.copy(italic = !_ui.value.italic, dirty = true); scheduleAutosave() }
     fun toggleUnderline() { _ui.value = _ui.value.copy(underline = !_ui.value.underline, dirty = true); scheduleAutosave() }
     fun setTab(value: Int) { _ui.value = _ui.value.copy(tab = value) }
-
-    fun find(query: String) {
-        val q = query.take(200)
-        val count = if (q.isEmpty()) 0 else Regex(Regex.escape(q)).findAll(_ui.value.text).count()
-        _ui.value = _ui.value.copy(searchQuery = q, searchCount = count, status = if (q.isEmpty()) "Ready" else if (count == 0) "No matches" else "$count match${if (count == 1) "" else "es"}")
-    }
-
-    fun replace(replacement: String, replaceAll: Boolean) {
-        val q = _ui.value.searchQuery
-        if (q.isEmpty()) return
-        val (updated, count) = EditorUtils.replace(_ui.value.text, q, replacement.take(10_000), replaceAll)
-        if (count > 0) { snapshot(); _ui.value = _ui.value.copy(text = updated, dirty = true, searchCount = if (replaceAll) 0 else count, status = "Replaced $count match${if (count == 1) "" else "es"}"); scheduleAutosave() }
-    }
-
-    fun evaluateCell(row: Int, col: Int) {
-        val value = _ui.value.cells.getOrNull(row)?.getOrNull(col) ?: return
-        val result = EditorUtils.evaluateSimpleFormula(value, _ui.value.cells) ?: return
-        _ui.value = _ui.value.copy(calculationResult = "${('A'.code + col).toChar()}${row + 1} = $result")
-    }
-
+    fun find(query: String) { val q = query.take(200); val count = if (q.isEmpty()) 0 else Regex(Regex.escape(q)).findAll(_ui.value.text).count(); _ui.value = _ui.value.copy(searchQuery = q, searchCount = count, status = if (q.isEmpty()) "Ready" else if (count == 0) "No matches" else "$count match${if (count == 1) "" else "es"}") }
+    fun replace(replacement: String, replaceAll: Boolean) { val q = _ui.value.searchQuery; if (q.isEmpty()) return; val (updated, count) = EditorUtils.replace(_ui.value.text, q, replacement.take(10_000), replaceAll); if (count > 0) { snapshot(); _ui.value = _ui.value.copy(text = updated, dirty = true, searchCount = if (replaceAll) 0 else count, status = "Replaced $count match${if (count == 1) "" else "es"}"); scheduleAutosave() } }
+    fun evaluateCell(row: Int, col: Int) { val value = _ui.value.cells.getOrNull(row)?.getOrNull(col) ?: return; val result = EditorUtils.evaluateSimpleFormula(value, _ui.value.cells) ?: return; _ui.value = _ui.value.copy(calculationResult = "${('A'.code + col).toChar()}${row + 1} = $result") }
     fun undo() { val previous = undo.removeLastOrNull() ?: return; redo.addLast(snapshotOf(_ui.value)); _ui.value = previous.toState(_ui.value).copy(status = "Undo", dirty = true); scheduleAutosave() }
     fun redo() { val next = redo.removeLastOrNull() ?: return; undo.addLast(snapshotOf(_ui.value)); _ui.value = next.toState(_ui.value).copy(status = "Redo", dirty = true); scheduleAutosave() }
 
@@ -141,54 +106,26 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
         val state = _ui.value
         val source = state.sourceUri ?: return false.also { _ui.value = state.copy(status = "Use Save As for a new document") }
         val extension = state.name.substringAfterLast('.', "").lowercase()
-        if (extension !in WRITABLE_EXTENSIONS) {
-            _ui.value = state.copy(status = "Use Save As — this format cannot be overwritten safely")
-            return false
-        }
-        autosaveJob?.cancel()
-        viewModelScope.launch { saveToUri(Uri.parse(source), extension, state) }
-        return true
+        if (extension !in WRITABLE_EXTENSIONS) { _ui.value = state.copy(status = "Use Save As — this format cannot be overwritten safely"); return false }
+        autosaveJob?.cancel(); viewModelScope.launch { saveToUri(Uri.parse(source), extension, state) }; return true
     }
-
-    fun save(uri: Uri, extension: String) {
-        val state = _ui.value
-        autosaveJob?.cancel()
-        viewModelScope.launch { saveToUri(uri, extension, state) }
-    }
+    fun save(uri: Uri, extension: String) { val state = _ui.value; autosaveJob?.cancel(); viewModelScope.launch { saveToUri(uri, extension, state) } }
 
     private suspend fun saveToUri(uri: Uri, extension: String, state: MyDocUiState) {
         _ui.value = state.copy(loading = true, status = "Saving…")
         val result = if (extension == "pdf") repository.exportPdfToUri(uri, state.text) else repository.exportToUri(uri, extension, state.text, state.cells, state.bold, state.italic, state.underline)
-        result.fold(
-            { recovery.clear(); _ui.value = _ui.value.copy(loading = false, dirty = false, status = "Saved", sourceUri = uri.toString(), recoveryAvailable = false); pushRecent(_ui.value.name, uri.toString()) },
-            { _ui.value = _ui.value.copy(loading = false, status = "Save failed: ${it.message ?: "unknown error"}") }
-        )
+        result.fold({ recovery.clear(); _ui.value = _ui.value.copy(loading = false, dirty = false, status = "Saved", sourceUri = uri.toString(), recoveryAvailable = false); pushRecent(_ui.value.name, uri.toString()) }, { _ui.value = _ui.value.copy(loading = false, status = "Save failed: ${it.message ?: "unknown error"}") })
     }
 
     private fun scheduleAutosave() {
         autosaveJob?.cancel()
         autosaveJob = viewModelScope.launch {
-            delay(1500)
-            if (!isActive || !_ui.value.dirty) return@launch
-            val snapshot = _ui.value
-            val source = snapshot.sourceUri
-            val extension = snapshot.name.substringAfterLast('.', "").lowercase()
+            delay(1500); if (!isActive || !_ui.value.dirty) return@launch
+            val snapshot = _ui.value; val source = snapshot.sourceUri; val extension = snapshot.name.substringAfterLast('.', "").lowercase()
             if (source != null && extension in WRITABLE_EXTENSIONS) {
-                val result = withContext(AppDispatchers.io) {
-                    repository.exportToUri(Uri.parse(source), extension, snapshot.text, snapshot.cells, snapshot.bold, snapshot.italic, snapshot.underline)
-                }
-                if (result.isSuccess) {
-                    val current = _ui.value
-                    if (current.sourceUri == source && current.text == snapshot.text && current.cells == snapshot.cells && current.bold == snapshot.bold && current.italic == snapshot.italic && current.underline == snapshot.underline) {
-                        _ui.value = current.copy(loading = false, dirty = false, status = "Saved automatically")
-                        recovery.clear()
-                    }
-                }
-            } else {
-                withContext(AppDispatchers.io) {
-                    runCatching { recovery.write(snapshot.name, extension.ifEmpty { "docx" }, snapshot.text.take(5_000_000)) }
-                }
-            }
+                val result = withContext(AppDispatchers.io) { repository.exportToUri(Uri.parse(source), extension, snapshot.text, snapshot.cells, snapshot.bold, snapshot.italic, snapshot.underline) }
+                if (result.isSuccess) { val current = _ui.value; if (current.sourceUri == source && current.text == snapshot.text && current.cells == snapshot.cells && current.bold == snapshot.bold && current.italic == snapshot.italic && current.underline == snapshot.underline) { _ui.value = current.copy(loading = false, dirty = false, status = "Saved automatically"); recovery.clear() } }
+            } else withContext(AppDispatchers.io) { runCatching { recovery.write(snapshot.name, extension.ifEmpty { "docx" }, snapshot.text.take(5_000_000)) } }
         }
     }
 
@@ -202,8 +139,8 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
         val stored = buildList {
             for (i in 0 until RecentDocumentStore.MAX_ITEMS) {
                 val raw = prefs.getString("item_$i", null) ?: continue
-                val parts = raw.split('|', limit = 2)
-                if (parts.size == 2) add(RecentDocument(parts[0], parts[1]))
+                val parts = raw.split('|')
+                if (parts.size >= 2) add(RecentDocument(parts[0], parts[1], parts.getOrNull(2) == "1"))
             }
         }
         val cleaned = RecentDocumentStore.removeInaccessible(getApplication<Application>().contentResolver, stored)
@@ -213,18 +150,14 @@ class MyDocViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun persistRecent(items: List<RecentDocument>) {
         val normalized = RecentDocumentStore.normalize(items)
-        prefs.edit().apply { for (i in 0 until RecentDocumentStore.MAX_ITEMS) remove("item_$i"); normalized.forEachIndexed { i, item -> putString("item_$i", "${item.name}|${item.uri}") } }.apply()
+        prefs.edit().apply { for (i in 0 until RecentDocumentStore.MAX_ITEMS) remove("item_$i"); normalized.forEachIndexed { i, item -> putString("item_$i", "${item.name}|${item.uri}|${if (item.favorite) "1" else "0"}") } }.apply()
     }
-
-    private fun pushRecent(name: String, uri: String) {
-        val updated = RecentDocumentStore.push(loadRecent(), name, uri)
-        persistRecent(updated); _ui.value = _ui.value.copy(recent = updated)
-    }
-
+    private fun pushRecent(name: String, uri: String) { val existing = loadRecent().firstOrNull { it.uri == uri }; val updated = RecentDocumentStore.push(loadRecent(), name, uri).map { if (it.uri == uri && existing?.favorite == true) it.copy(favorite = true) else it }; persistRecent(updated); _ui.value = _ui.value.copy(recent = updated) }
     companion object { private val WRITABLE_EXTENSIONS = setOf("docx", "xlsx", "pptx", "txt", "csv") }
 }
 
-data class RecentDocument(val name: String, val uri: String)
+data class RecentDocument(val name: String, val uri: String, val favorite: Boolean = false)
+enum class RecentSortMode { RECENT, NAME_ASC, NAME_DESC }
 data class MyDocUiState(
     val tab: Int = 0,
     val name: String = "Untitled",

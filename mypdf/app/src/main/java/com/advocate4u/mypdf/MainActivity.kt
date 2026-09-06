@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
@@ -158,9 +159,6 @@ fun MyPdfApp(initialUri: Uri?) {
             Canvas(
                 Modifier
                     .fillMaxSize()
-                    // One- or two-finger pan, plus true two-finger pinch-to-zoom.
-                    // Pan follows the fingers in every direction and is clamped so the
-                    // page can be moved left/right/top/bottom without losing it.
                     .pointerInput(state.page, state.zoom, bmp) {
                         detectTransformGestures { centroid, pan, zoom, _ ->
                             val oldScale = gestureScale
@@ -169,9 +167,6 @@ fun MyPdfApp(initialUri: Uri?) {
                             val imageHeight = bmp.height * state.zoom * newScale
                             val oldWidth = bmp.width * state.zoom * oldScale
                             val oldHeight = bmp.height * state.zoom * oldScale
-
-                            // Keep the point under the fingers stable while pinching.
-                            val center = Offset(size.width / 2f, size.height / 2f)
                             val oldLeft = (size.width - oldWidth) / 2f + offset.x
                             val oldTop = (size.height - oldHeight) / 2f + offset.y
                             val localX = (centroid.x - oldLeft) / oldScale
@@ -180,13 +175,9 @@ fun MyPdfApp(initialUri: Uri?) {
                                 centroid.x - (size.width - imageWidth) / 2f - localX * newScale + pan.x,
                                 centroid.y - (size.height - imageHeight) / 2f - localY * newScale + pan.y
                             )
-
                             val maxX = if (imageWidth > size.width) (imageWidth - size.width) / 2f else 0f
                             val maxY = if (imageHeight > size.height) (imageHeight - size.height) / 2f else 0f
-                            newOffset = Offset(
-                                newOffset.x.coerceIn(-maxX, maxX),
-                                newOffset.y.coerceIn(-maxY, maxY)
-                            )
+                            newOffset = Offset(newOffset.x.coerceIn(-maxX, maxX), newOffset.y.coerceIn(-maxY, maxY))
                             gestureScale = newScale
                             offset = newOffset
                         }
@@ -201,11 +192,7 @@ fun MyPdfApp(initialUri: Uri?) {
                 val h = image.height * totalScale
                 val left = (size.width - w) / 2f + offset.x
                 val top = (size.height - h) / 2f + offset.y
-                drawImage(
-                    image,
-                    dstOffset = androidx.compose.ui.unit.IntOffset(left.toInt(), top.toInt()),
-                    dstSize = androidx.compose.ui.unit.IntSize(w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1))
-                )
+                drawImage(image, dstOffset = androidx.compose.ui.unit.IntOffset(left.toInt(), top.toInt()), dstSize = androidx.compose.ui.unit.IntSize(w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1)))
                 state.notes.filter { it.page == state.page }.forEach { note ->
                     drawCircle(noteColor, 10f, Offset(left + note.x * totalScale, top + note.y * totalScale))
                 }
@@ -219,7 +206,7 @@ fun MyPdfApp(initialUri: Uri?) {
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Text("Pages", style = MaterialTheme.typography.titleLarge); Text("Deleted pages are excluded when exporting.", style = MaterialTheme.typography.bodySmall); Spacer(Modifier.height(8.dp))
         androidx.compose.foundation.lazy.LazyColumn { items((0 until state.pageCount).toList()) { page -> val deleted = page in state.removed; ListItem(
-            headlineContent = { Text("Page ${page + 1}${if (deleted) " (deleted)" else ""}") }, supportingContent = { Text(if (deleted) "Will be removed on export" else "Included") }, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), trailingContent = { if (deleted) TextButton({ onRestore(page) }) { Text("Restore") } else TextButton({ onDelete(page) }) { Text("Delete") } }
+            headlineContent = { Text("Page ${page + 1}${if (deleted) " (deleted)" else ""}") }, supportingContent = { Text(if (deleted) "Will be removed on export" else "Included") }, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), trailingContent = { if (deleted) TextButton({ onRestore(page) }) { Text("Restore") } else TextButton({ onDelete(page) }) { Text("Delete") } }, leadingContent = { TextButton({ onSelect(page) }) { Text("Open") } }
         ) } }
     }
 }

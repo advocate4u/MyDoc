@@ -25,4 +25,19 @@ object RecentDocumentStore {
 
     fun removeInaccessible(resolver: ContentResolver, items: List<RecentDocument>): List<RecentDocument> =
         normalize(items.filter { isAccessible(resolver, it) })
+
+    fun filter(items: List<RecentDocument>, query: String): List<RecentDocument> {
+        val q = query.trim()
+        if (q.isEmpty()) return normalize(items)
+        return normalize(items.filter { it.name.contains(q, ignoreCase = true) })
+    }
+
+    fun sort(items: List<RecentDocument>, mode: RecentSortMode): List<RecentDocument> =
+        when (mode) {
+            RecentSortMode.RECENT -> items
+            RecentSortMode.NAME_ASC -> items.sortedBy { it.name.lowercase() }
+            RecentSortMode.NAME_DESC -> items.sortedByDescending { it.name.lowercase() }
+        }.let(::normalize)
 }
+
+enum class RecentSortMode { RECENT, NAME_ASC, NAME_DESC }

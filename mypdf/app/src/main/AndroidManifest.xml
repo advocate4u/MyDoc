@@ -3,6 +3,7 @@
     <application
         android:theme="@style/Theme.MyPDF"
         android:label="MyPDF"
+        android:icon="@drawable/mypdf_icon"
         android:allowBackup="true"
         android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true">
